@@ -1,0 +1,49 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      APP_ENV: development
+      LOG_LEVEL: INFO
+      DB_URL: postgresql+psycopg://postgres:postgres@postgres:5432/reachy_bouncer
+      REACHY_SIMULATION: "true"
+      REACHY_ENABLED: "false"
+      MLAI_BACKEND_URL: http://mock-mlai-backend:8091
+      MLAI_BACKEND_API_KEY: local-dev-key
+      SALTO_CLIENT_ID: local-client
+      SALTO_CLIENT_SECRET: local-secret
+      SALTO_AUTH_BASE_URL: http://mock-salto:8092
+      SALTO_API_BASE_URL: http://mock-salto:8092
+      SALTO_REDIRECT_URI: http://localhost:8080/api/admin/salto/oauth/callback
+      SALTO_SITE_ID: site-1
+      SALTO_LOCK_ID: lock-1
+    depends_on:
+      - postgres
+      - mock-mlai-backend
+      - mock-salto
+    volumes:
+      - ./data:/app/data
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: reachy_bouncer
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+
+  mock-mlai-backend:
+    build: .
+    command: ["uvicorn", "app.scripts.mock_mlai_backend:app", "--host", "0.0.0.0", "--port", "8091"]
+    ports:
+      - "8091:8091"
+
+  mock-salto:
+    build: .
+    command: ["uvicorn", "app.scripts.mock_salto_server:app", "--host", "0.0.0.0", "--port", "8092"]
+    ports:
+      - "8092:8092"

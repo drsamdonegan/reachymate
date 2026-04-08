@@ -89,16 +89,32 @@ def test_recommended_daemon_command_prefers_no_localhost_only_on_macos(monkeypat
 
 
 def test_dashboard_main_forces_network_mode_on_macos(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Dashboard mode should avoid localhost-only Zenoh on macOS."""
+    """Older macOS SDK versions should avoid localhost-only Zenoh."""
     app = MagicMock()
     app.daemon_on_localhost = True
     monkeypatch.setattr(main_mod.sys, "platform", "darwin")
+    monkeypatch.setattr(main_mod, "version", lambda _: "1.5.9")
     monkeypatch.setattr(main_mod, "parse_args", lambda: (_args(), []))
     monkeypatch.setattr(main_mod, "ReachyConvoMate", lambda: app)
 
     main_mod.dashboard_main()
 
     assert app.daemon_on_localhost is False
+    app.wrapped_run.assert_called_once_with()
+
+
+def test_dashboard_main_keeps_localhost_mode_on_newer_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Newer macOS SDK versions should keep localhost mode for local daemon access."""
+    app = MagicMock()
+    app.daemon_on_localhost = True
+    monkeypatch.setattr(main_mod.sys, "platform", "darwin")
+    monkeypatch.setattr(main_mod, "version", lambda _: "1.6.0")
+    monkeypatch.setattr(main_mod, "parse_args", lambda: (_args(), []))
+    monkeypatch.setattr(main_mod, "ReachyConvoMate", lambda: app)
+
+    main_mod.dashboard_main()
+
+    assert app.daemon_on_localhost is True
     app.wrapped_run.assert_called_once_with()
 
 
