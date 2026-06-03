@@ -1,25 +1,25 @@
 """Entrypoint for ReachyConvoMate."""
 
+import argparse
+import asyncio
 import os
 import sys
-import time
-import asyncio
-import argparse
 import threading
+import time
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Dict, List, Optional
 
 import gradio as gr
 from fastapi import FastAPI
 from fastrtc import Stream
 from gradio.utils import get_space
-
 from reachy_mini import ReachyMini, ReachyMiniApp
+
 from reachy_mini_conversation_app.utils import (
+    handle_vision_stuff,
     parse_args,
     setup_logger,
-    handle_vision_stuff,
 )
-
 
 DASHBOARD_URL = "http://127.0.0.1:7860/"
 DAEMON_URL = "http://127.0.0.1:8000/"
@@ -41,13 +41,37 @@ def _recommended_daemon_command() -> str:
 
 def _should_force_network_dashboard_connection() -> bool:
     """Return True when the dashboard should bypass localhost-only Zenoh on this platform."""
-    return sys.platform == "darwin"
+    if sys.platform != "darwin":
+        return False
+
+    try:
+        sdk_version = version("reachy_mini")
+    except PackageNotFoundError:
+        return True
+
+    try:
+        major_str, minor_str, *_ = sdk_version.split(".")
+        major = int(major_str)
+        minor = int(minor_str)
+    except (TypeError, ValueError):
+        return True
+
+    # Reachy Mini 1.6 switched the local client transport to localhost WebSockets.
+    # For newer SDKs, forcing network mode breaks local dashboard startup on macOS.
+    return (major, minor) < (1, 6)
 
 
 def update_chatbot(chatbot: List[Dict[str, Any]], response: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Update the chatbot with AdditionalOutputs."""
     chatbot.append(response)
     return chatbot
+
+
+def _status_field(status: Any, field: str, default: Any = None) -> Any:
+    """Read daemon status fields across dict-based and model-based SDK versions."""
+    if isinstance(status, dict):
+        return status.get(field, default)
+    return getattr(status, field, default)
 
 
 def _build_connection_help(args: argparse.Namespace, custom_dashboard_mode: bool) -> str:
@@ -67,7 +91,8 @@ def _build_connection_help(args: argparse.Namespace, custom_dashboard_mode: bool
             f"Start the local daemon first: `{_recommended_daemon_command()}`",
             launch_hint,
             f"Verify the daemon responds on {DAEMON_URL}.",
-            "If the daemon dashboard on :8000 is up but the app still cannot connect on macOS, retry the daemon with "
+            "If the daemon dashboard on :8000 is up but the app still cannot connect on macOS, "
+            "retry the daemon with "
             f"`{MACOS_DAEMON_START_COMMAND}`.",
             "If the daemon cannot find the robot, retry with `--log-level DEBUG` or `--serialport <device>`.",
         ]
@@ -104,12 +129,12 @@ def run(
     instance_path: Optional[str] = None,
 ) -> None:
     """Run the Reachy Mini conversation app."""
-    # Putting these dependencies here makes the dashboard faster to load when the conversation app is installed
-    from reachy_mini_conversation_app.moves import MovementManager
+    # Keep these imports here so the dashboard loads faster when the app is installed.
+    from reachy_mini_conversation_app.audio.head_wobbler import HeadWobbler
     from reachy_mini_conversation_app.console import LocalStream
+    from reachy_mini_conversation_app.moves import MovementManager
     from reachy_mini_conversation_app.openai_realtime import OpenaiRealtimeHandler
     from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
-    from reachy_mini_conversation_app.audio.head_wobbler import HeadWobbler
 
     logger = setup_logger(args.debug)
     logger.info("Starting ReachyConvoMate")
@@ -148,14 +173,21 @@ def run(
             raise ConnectionError(_build_connection_help(args, custom_dashboard_mode)) from exc
 
     # Check if running in simulation mode without --gradio
-    if robot.client.get_status()["simulation_enabled"] and not args.gradio:
+    robot_status = robot.client.get_status()
+    if _status_field(robot_status, "simulation_enabled", False) and not args.gradio:
         logger.error(
-            "Simulation mode requires Gradio interface. Please use --gradio flag when running in simulation mode.",
+            "Simulation mode requires Gradio interface. Please use --gradio flag "
+            "when running in simulation mode.",
         )
         robot.client.disconnect()
         sys.exit(1)
 
     camera_worker, _, vision_manager = handle_vision_stuff(args, robot)
+    if getattr(args, "browser_camera", False):
+        from reachy_mini_conversation_app.camera_worker import BrowserCameraWorker
+
+        camera_worker = BrowserCameraWorker()
+        logger.info("Using browser-fed camera frames for dashboard snapshots and gpt-realtime camera tool.")
 
     movement_manager = MovementManager(
         current_robot=robot,

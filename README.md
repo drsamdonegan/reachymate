@@ -1,267 +1,127 @@
----
-title: Reachy Mini Conversation App
-emoji: 🎤
-colorFrom: red
-colorTo: blue
-sdk: static
-pinned: false
-short_description: Talk with Reachy Mini !
-tags:
- - reachy_mini
- - reachy_mini_python_app
----
+# Reachy Office Bouncer
 
-# Reachy Mini conversation app
+FastAPI-based office access controller for Reachy Mini Lite.
 
-Conversational app for the Reachy Mini robot combining OpenAI's realtime APIs, vision pipelines, and choreographed motion libraries.
+The app is designed to run mostly locally, fail closed, and only unlock when all of the following are true:
 
-![Reachy Mini Dance](docs/assets/reachy_mini_dance.gif)
+- a nearby person says `Hey Reachy`
+- exactly one usable face is present
+- the face matches an enrolled local embedding set above threshold
+- `mlai-backend` reports a `booked` coworking booking for `today`
+- SALTO unlock succeeds
 
-## Architecture
+Voice is only a wake signal. It is never used as an authentication factor.
 
-The app follows a layered architecture connecting the user, AI services, and robot hardware:
+## What Is Included
 
-<p align="center">
-  <img src="docs/assets/conversation_app_arch.svg" alt="Architecture Diagram" width="600"/>
-</p>
+- `app/`: main application package
+- `app/static/`: local browser admin UI
+- `app/tests/`: unit and integration tests
+- `app/scripts/`: enrollment, diagnostics, calibration, and mock services
+- `docs/`: setup, architecture, privacy, runbook, and troubleshooting
+- `Dockerfile` and `docker-compose.yml`: simulation-first local stack
 
-## Overview
-- Real-time audio conversation loop powered by the OpenAI realtime API and `fastrtc` for low-latency streaming.
-- Vision processing uses gpt-realtime by default (when camera tool is used), with optional local vision processing using SmolVLM2 model running on-device (CPU/GPU/MPS) via `--local-vision` flag.
-- Layered motion system queues primary moves (dances, emotions, goto poses, breathing) while blending speech-reactive wobble and face-tracking.
-- Async tool dispatch integrates robot motion, camera capture, and optional face-tracking capabilities through a custom dashboard with live camera/chat panels, plus an optional standalone Gradio UI.
+## Quickstart
 
-## Installation
-
-> [!IMPORTANT]
-> Requires Python 3.12 and [uv](https://docs.astral.sh/uv/). Windows support is experimental.
-
-### Quickstart
+1. Create a Python 3.11 environment:
 
 ```bash
-# 1. Create a virtual environment
-uv venv --python 3.12.1
+uv venv --python 3.11
 source .venv/bin/activate
-
-# 2. Install the Reachy Mini daemon (SDK + app server)
-uv pip install reachy-mini
-
-# 3. Clone and install this repo in editable mode
-git clone https://github.com/mkemka/reachymate.git
-cd reachymate
-uv pip install -e .
-
-# 4. Start the Reachy Mini daemon
-reachy-mini-daemon --no-localhost-only --log-level INFO
-
-# 5. In a second terminal, launch the custom dashboard
-source .venv/bin/activate
-reachy-convo-dashboard
 ```
 
-Once the daemon is running, confirm the daemon UI is reachable at http://127.0.0.1:8000/ and open http://127.0.0.1:7860/ for the conversation dashboard. Enter your OpenAI API key on first launch if needed -- it will be saved for subsequent runs.
-
-### Optional extras
+2. Install the project:
 
 ```bash
-uv pip install -e ".[reachy_mini_wireless]"  # Wireless Reachy Mini (GStreamer)
-uv pip install -e ".[local_vision]"          # Local vision (PyTorch/SmolVLM2)
-uv pip install -e ".[yolo_vision]"           # YOLO face tracking
-uv pip install -e ".[mediapipe_vision]"      # MediaPipe face tracking
-uv pip install -e ".[all_vision]"            # All vision extras
-uv pip install -e ".[dev]"                   # Dev tools (pytest, ruff, mypy)
+uv pip install -e ".[dev]"
 ```
 
-## Optional dependency groups
-
-| Extra | Purpose | Notes |
-|-------|---------|-------|
-| `reachy_mini_wireless` | Wireless Reachy Mini with GStreamer support. | Required for wireless versions of Reachy Mini, includes GStreamer dependencies.
-| `local_vision` | Run the local VLM (SmolVLM2) through PyTorch/Transformers. | GPU recommended; ensure compatible PyTorch builds for your platform.
-| `yolo_vision` | YOLOv8 tracking via `ultralytics` and `supervision`. | CPU friendly; supports the `--head-tracker yolo` option.
-| `mediapipe_vision` | Lightweight landmark tracking with MediaPipe. | Works on CPU; enables `--head-tracker mediapipe`.
-| `all_vision` | Convenience alias installing every vision extra. | Install when you want the flexibility to experiment with every provider.
-| `dev` | Developer tooling (`pytest`, `ruff`). | Add on top of either base or `all_vision` environments.
-
-## Configuration
-
-1. Copy `.env.example` to `.env`.
-2. Fill in the required values, notably the OpenAI API key.
-
-| Variable | Description |
-|----------|-------------|
-| `OPENAI_API_KEY` | Required. Grants access to the OpenAI realtime endpoint.
-| `MODEL_NAME` | Override the realtime model (defaults to `gpt-realtime`). Used for both conversation and vision (unless `--local-vision` flag is used).
-| `HF_HOME` | Cache directory for local Hugging Face downloads (only used with `--local-vision` flag, defaults to `./cache`).
-| `HF_TOKEN` | Optional token for Hugging Face models (only used with `--local-vision` flag, falls back to `huggingface-cli login`).
-| `LOCAL_VISION_MODEL` | Hugging Face model path for local vision processing (only used with `--local-vision` flag, defaults to `HuggingFaceTB/SmolVLM2-2.2B-Instruct`).
-
-## Running the app
-
-Start the local daemon first, then choose the app surface you want.
-
-### Recommended: custom dashboard
-
-This is the path for the live camera view, chat log, personality editor, and local control panel:
+3. Copy the environment template:
 
 ```bash
-# Terminal 1
-source .venv/bin/activate
-reachy-mini-daemon --no-localhost-only --log-level INFO
-
-# Terminal 2
-source .venv/bin/activate
-reachy-convo-dashboard
-
-# Optional: speech-only dashboard bring-up if camera access is blocked
-# reachy-convo-dashboard --no-camera
+cp .env.example .env
 ```
 
-The dashboard is served at http://127.0.0.1:7860/. If you prefer not to rely on the generated console script, you can launch the same flow with:
+4. Start the app:
 
 ```bash
-python -m reachy_mini_conversation_app.main
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
 ```
 
-### Standalone console / Gradio app
+5. Open the local admin UI at `http://localhost:8080`.
 
-Use the standalone CLI when you want the direct audio loop or the Gradio-only surface:
+## Docker Simulation Stack
 
 ```bash
-reachy-convo-mate
+docker compose up --build
 ```
 
-By default, `reachy-convo-mate` runs in console mode for direct audio interaction. Use the `--gradio` flag when you explicitly want the standalone Gradio surface. With a camera attached, vision is handled by the gpt-realtime model when the camera tool is used. For local vision processing, use the `--local-vision` flag to process frames periodically using the SmolVLM2 model. Additionally, you can enable face tracking via YOLO or MediaPipe pipelines depending on the extras you installed.
+This starts:
 
-### CLI options
+- the office-bouncer app on `:8080`
+- Postgres on `:5432`
+- a mock `mlai-backend` on `:8091`
+- a mock SALTO service on `:8092`
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--head-tracker {yolo,mediapipe}` | `None` | Select a face-tracking backend when a camera is available. YOLO is implemented locally, MediaPipe comes from the `reachy_mini_toolbox` package. Requires the matching optional extra. |
-| `--no-camera` | `False` | Run without camera capture or face tracking. |
-| `--local-vision` | `False` | Use local vision model (SmolVLM2) for periodic image processing instead of gpt-realtime vision. Requires `local_vision` extra to be installed. |
-| `--gradio` | `False` | Launch the Gradio web UI. Without this flag, runs in console mode. Required when running in simulation mode. |
-| `--debug` | `False` | Enable verbose logging for troubleshooting. |
-| `--wireless-version` | `False` | Use GStreamer backend for wireless version of the robot. Requires `reachy_mini_wireless` extra to be installed.
+## Tests
 
-
-### Examples
-- Run on hardware with MediaPipe face tracking:
-
-  ```bash
-  reachy-convo-mate --head-tracker mediapipe
-  ```
-
-- Run with local vision processing (requires `local_vision` extra):
-
-  ```bash
-  reachy-convo-mate --local-vision
-  ```
-
-- Run with wireless support (requires `reachy_mini_wireless` extra and daemon started with `--wireless-version`):
-
-  ```bash
-  reachy-convo-mate --wireless-version
-  ```
-
-- Disable the camera pipeline (audio-only conversation):
-
-  ```bash
-  reachy-convo-mate --no-camera
-  ```
-
-### Troubleshooting
-
-- Timeout error:
-If you get an error like this:
-  ```bash
-  TimeoutError: Timeout while waiting for connection with the server.
-  ```
-It usually means the Reachy Mini daemon is not running or not reachable on localhost. Start it first with:
-
-  ```bash
-  reachy-mini-daemon --no-localhost-only --log-level INFO
-  ```
-
-Then confirm http://127.0.0.1:8000/ is reachable before launching `reachy-convo-dashboard` or `reachy-convo-mate`.
-
-If you are not on macOS, `--localhost-only` may still work. On this Mac, `--no-localhost-only` was required because the localhost-only Zenoh listener bound IPv6 loopback while the client attempted IPv4 localhost.
-
-If the daemon dashboard on `:8000` is reachable but the app still times out while connecting to `localhost:7447`, retry the daemon with:
-
-  ```bash
-  reachy-mini-daemon --no-localhost-only --log-level INFO
-  ```
-
-This can be necessary on macOS when the localhost-only Zenoh listener binds IPv6 loopback but the client is attempting IPv4 localhost.
-
-- Camera permission error on macOS:
-If startup logs mention that video capture is not authorized, macOS is blocking camera access for the host app running Python. Grant camera access in System Settings > Privacy & Security > Camera, then relaunch `reachy-convo-dashboard`. If you want to validate realtime speech first, use:
-
-  ```bash
-  reachy-convo-dashboard --no-camera
-  ```
-
-## LLM tools exposed to the assistant
-
-| Tool | Action | Dependencies |
-|------|--------|--------------|
-| `move_head` | Queue a head pose change (left/right/up/down/front). | Core install only. |
-| `camera` | Capture the latest camera frame and send it to gpt-realtime for vision analysis. | Requires camera worker; uses gpt-realtime vision by default. |
-| `head_tracking` | Enable or disable face-tracking offsets (not facial recognition - only detects and tracks face position). | Camera worker with configured head tracker. |
-| `dance` | Queue a dance from `reachy_mini_dances_library`. | Core install only. |
-| `stop_dance` | Clear queued dances. | Core install only. |
-| `play_emotion` | Play a recorded emotion clip via Hugging Face assets. | Needs `HF_TOKEN` for the recorded emotions dataset. |
-| `stop_emotion` | Clear queued emotions. | Core install only. |
-| `do_nothing` | Explicitly remain idle. | Core install only. |
-
-## Using custom profiles
-Create custom profiles with dedicated instructions and enabled tools! 
-
-Set `REACHY_MINI_CUSTOM_PROFILE=<name>` to load `src/reachy_mini_conversation_app/profiles/<name>/` (see `.env.example`). If unset, the `default` profile is used.
-
-Each profile requires two files: `instructions.txt` (prompt text) and `tools.txt` (list of allowed tools), and optionally contains custom tools implementations.
-
-### Custom instructions
-Write plain-text prompts in `instructions.txt`. To reuse shared prompt pieces, add lines like:
+```bash
+pytest
 ```
-[passion_for_lobster_jokes]
-[identities/witty_identity]
+
+## Core Environment Variables
+
+- `DB_URL`
+- `REACHY_ENABLED`
+- `REACHY_SIMULATION`
+- `MLAI_BACKEND_URL`
+- `MLAI_BACKEND_API_KEY`
+- `SALTO_CLIENT_ID`
+- `SALTO_CLIENT_SECRET`
+- `SALTO_AUTH_BASE_URL`
+- `SALTO_API_BASE_URL`
+- `SALTO_SITE_ID`
+- `SALTO_LOCK_ID`
+- `FACE_MATCH_THRESHOLD`
+- `WAKEWORD_THRESHOLD`
+- `VAD_THRESHOLD`
+
+See [.env.example](/Users/samdonegan/Documents/Code/reachymate/.env.example) for the full list.
+
+## Admin Endpoints
+
+- `GET /healthz/live`
+- `GET /healthz/ready`
+- `GET /camera/snapshot`
+- `GET /ws/telemetry`
+- `POST /api/admin/enroll`
+- `GET /api/admin/events`
+- `GET /api/admin/diagnostics/audio`
+- `GET /api/admin/diagnostics/camera`
+- `GET /api/admin/users/{user_id}/booking-check`
+- `POST /api/admin/test-speech`
+- `POST /api/admin/simulate/attempt`
+- `GET /api/admin/salto/oauth/start`
+- `GET /api/admin/salto/oauth/callback`
+
+## Enrollment
+
+Enrollment can be done through the browser UI or the CLI:
+
+```bash
+python -m app.scripts.enroll_user \
+  --full-name "Jane Doe" \
+  --slack-user-id U12345 \
+  --slack-display-name jane \
+  sample_front.jpg sample_left.jpg sample_right.jpg
 ```
-Each placeholder pulls the matching file under `src/reachy_mini_conversation_app/prompts/` (nested paths allowed). See `src/reachy_mini_conversation_app/profiles/example/` for a reference layout.
 
-### Enabling tools
-List enabled tools in `tools.txt`, one per line; prefix with `#` to comment out. For example:
+The enrollment flow stores face embeddings only. It rejects low-quality samples.
 
-```
-play_emotion
-# move_head
+## Related Docs
 
-# My custom tool defined locally
-sweep_look
-```
-Tools are resolved first from Python files in the profile folder (custom tools), then from the shared library `src/reachy_mini_conversation_app/tools/` (e.g., `dance`, `head_tracking`). 
-
-### Custom tools
-On top of built-in tools found in the shared library, you can implement custom tools specific to your profile by adding Python files in the profile folder. 
-Custom tools must subclass `reachy_mini_conversation_app.tools.core_tools.Tool` (see `profiles/example/sweep_look.py`).
-
-### Edit personalities from the UI
-When running with `--gradio`, open the “Personality” accordion. When running `reachy-convo-dashboard`, use the built-in “Personality studio” panel:
-- Select among available profiles (folders under `src/reachy_mini_conversation_app/profiles/`) or the built‑in default.
-- Click “Apply” to update the current session instructions live.
-- Create a new personality by entering a name and instructions text; it stores files under `profiles/<name>/` and copies `tools.txt` from the `default` profile.
-
-Note: The “Personality” panel updates the conversation instructions. Tool sets are loaded at startup from `tools.txt` and are not hot‑reloaded.
-
-
-
-
-## Development workflow
-- Install the dev group extras: `uv sync --group dev` or `pip install -e .[dev]`.
-- Run formatting and linting: `ruff check .`.
-- Execute the test suite: `pytest`.
-- When iterating on robot motions, keep the control loop responsive => offload blocking work using the helpers in `tools.py`.
-
-## License
-Apache 2.0
+- [Architecture](/Users/samdonegan/Documents/Code/reachymate/docs/architecture.md)
+- [Setup](/Users/samdonegan/Documents/Code/reachymate/docs/setup.md)
+- [Privacy](/Users/samdonegan/Documents/Code/reachymate/docs/privacy.md)
+- [Runbook](/Users/samdonegan/Documents/Code/reachymate/docs/runbook.md)
+- [Troubleshooting](/Users/samdonegan/Documents/Code/reachymate/docs/troubleshooting.md)

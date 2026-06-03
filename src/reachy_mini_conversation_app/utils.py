@@ -1,9 +1,10 @@
-import logging
 import argparse
+import logging
 import warnings
 from typing import Any, Tuple
 
 from reachy_mini import ReachyMini
+
 from reachy_mini_conversation_app.camera_worker import CameraWorker
 
 
@@ -17,6 +18,12 @@ def parse_args() -> Tuple[argparse.Namespace, list]:  # type: ignore
         help="Choose head tracker (default: None)",
     )
     parser.add_argument("--no-camera", default=False, action="store_true", help="Disable camera usage")
+    parser.add_argument(
+        "--browser-camera",
+        default=False,
+        action="store_true",
+        help="Use browser-fed camera frames when native OpenCV camera capture is unavailable",
+    )
     parser.add_argument(
         "--local-vision",
         default=False,
@@ -37,10 +44,16 @@ def parse_args() -> Tuple[argparse.Namespace, list]:  # type: ignore
         action="store_true",
         help="Use when conversation app is running on the same device as Reachy Mini daemon",
     )
-    return parser.parse_known_args()
+    args, unknown = parser.parse_known_args()
+    if args.browser_camera:
+        args.no_camera = True
+    return args, unknown
 
 
-def handle_vision_stuff(args: argparse.Namespace, current_robot: ReachyMini) -> Tuple[CameraWorker | None, Any, Any]:
+def handle_vision_stuff(
+    args: argparse.Namespace,
+    current_robot: ReachyMini,
+) -> Tuple[CameraWorker | None, Any, Any]:
     """Initialize camera, head tracker, camera worker, and vision manager.
 
     By default, vision is handled by gpt-realtime model when camera tool is used.
@@ -73,7 +86,8 @@ def handle_vision_stuff(args: argparse.Namespace, current_robot: ReachyMini) -> 
                 vision_manager = initialize_vision_manager(camera_worker)
             except ImportError as e:
                 raise ImportError(
-                    "To use --local-vision, please install the extra dependencies: pip install '.[local_vision]'",
+                    "To use --local-vision, please install the extra dependencies: "
+                    "pip install '.[local_vision]'",
                 ) from e
         else:
             logging.getLogger(__name__).info(

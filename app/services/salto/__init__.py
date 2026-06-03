@@ -1,0 +1,2 @@
+"""SALTO integration."""
+

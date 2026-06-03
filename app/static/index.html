@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reachy Office Bouncer</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <p class="eyebrow">Reachy Mini Lite</p>
+        <h1>Office Bouncer Console</h1>
+        <p class="subtitle">Live vision, local telemetry, enrollment, booking checks, and audit logs.</p>
+      </header>
+
+      <section class="grid">
+        <article class="panel">
+          <div class="panel-head">
+            <h2>System Health</h2>
+            <button id="refresh-health">Refresh</button>
+          </div>
+          <div id="health-summary" class="muted">Loading...</div>
+          <table id="health-table">
+            <thead>
+              <tr><th>Component</th><th>Status</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Reachy's View</h2>
+            <button id="simulate-attempt">Simulate Attempt</button>
+          </div>
+          <img id="camera-feed" alt="Reachy camera feed" />
+          <div id="camera-status" class="muted"></div>
+        </article>
+      </section>
+
+      <section class="grid">
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Live Telemetry</h2>
+            <button id="clear-feed">Clear</button>
+          </div>
+          <div id="telemetry-feed" class="feed"></div>
+        </article>
+
+        <article class="panel">
+          <h2>Actions</h2>
+          <form id="speech-form" class="stack">
+            <label for="speech-text">Test speech</label>
+            <div class="inline">
+              <input id="speech-text" name="text" value="Diagnostics complete." />
+              <button type="submit">Speak</button>
+            </div>
+          </form>
+
+          <form id="booking-form" class="stack">
+            <label for="booking-user-id">Booking lookup by user ID</label>
+            <div class="inline">
+              <input id="booking-user-id" name="user_id" placeholder="Paste local user ID" />
+              <button type="submit">Check</button>
+            </div>
+            <pre id="booking-result" class="output"></pre>
+          </form>
+        </article>
+      </section>
+
+      <section class="panel">
+        <h2>Enrollment</h2>
+        <form id="enrollment-form" class="stack">
+          <div class="grid two">
+            <input name="full_name" placeholder="Full name" required />
+            <input name="slack_user_id" placeholder="Slack user ID" required />
+            <input name="slack_display_name" placeholder="Slack display name" required />
+            <input name="company" placeholder="Company / team" />
+          </div>
+          <label for="enrollment-files">Face samples</label>
+          <input id="enrollment-files" type="file" multiple accept="image/*" required />
+          <button type="submit">Enroll user</button>
+        </form>
+        <pre id="enrollment-result" class="output"></pre>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Recent Access Events</h2>
+          <button id="refresh-events">Refresh</button>
+        </div>
+        <div id="events-list" class="events"></div>
+      </section>
+    </div>
+
+    <script src="/static/main.js"></script>
+  </body>
+</html>

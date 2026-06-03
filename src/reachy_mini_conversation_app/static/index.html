@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ReachyConvoMate – Settings</title>
-    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/style.css?v=reachy-source" />
   </head>
   <body>
     <div class="ambient"></div>
@@ -66,6 +66,10 @@
           <span class="chip">Live</span>
         </div>
         <p class="muted">See the live camera feed from Reachy's perspective and capture photos.</p>
+        <div id="camera-device-row" class="row hidden">
+          <label for="camera-device-select">Camera</label>
+          <select id="camera-device-select"></select>
+        </div>
         <div class="camera-container">
           <img id="camera-feed" alt="Camera feed" />
           <div id="camera-offline" class="camera-offline">Camera offline</div>

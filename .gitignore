@@ -47,6 +47,9 @@ coverage.xml
 tmp/
 *.log
 cache/
+data/*.db
+data/*.sqlite
+data/*.sqlite3
 
 # macOS
 .DS_Store

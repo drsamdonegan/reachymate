@@ -6,20 +6,97 @@ Ported from main_works.py camera_worker() function to provide:
 - Latest frame always available for tools
 """
 
-import time
 import logging
 import threading
+import time
 from typing import Any, List, Tuple
 
+import cv2
 import numpy as np
 from numpy.typing import NDArray
-from scipy.spatial.transform import Rotation as R
-
 from reachy_mini import ReachyMini
 from reachy_mini.utils.interpolation import linear_pose_interpolation
-
+from scipy.spatial.transform import Rotation as R
 
 logger = logging.getLogger(__name__)
+
+
+class BrowserCameraWorker:
+    """Frame buffer populated by browser-captured JPEG frames.
+
+    This is used when macOS denies native OpenCV camera access to the Python
+    process. The local browser owns camera permission and posts frames back to
+    the dashboard, while the rest of the app still sees a CameraWorker-like
+    object.
+    """
+
+    def __init__(self) -> None:
+        self.latest_frame: NDArray[np.uint8] | None = None
+        self.frame_lock = threading.Lock()
+        self.last_update_time: float | None = None
+        self.active_source_id: str | None = None
+        self.active_source_score = -1000
+
+    def start(self) -> None:
+        logger.info("Browser camera worker ready")
+
+    def stop(self) -> None:
+        logger.info("Browser camera worker stopped")
+
+    def _source_score(self, source_label: str | None) -> int:
+        label = (source_label or "").lower()
+        score = 0
+        if "reachy" in label or "pollen" in label:
+            score += 100
+        if "usb" in label or "uvc" in label or "external" in label:
+            score += 40
+        if any(source in label for source in ("facetime", "built-in", "continuity", "iphone", "ipad")):
+            score -= 60
+        return score
+
+    def set_frame_from_jpeg(
+        self,
+        jpeg_bytes: bytes,
+        *,
+        source_id: str | None = None,
+        source_label: str | None = None,
+    ) -> bool:
+        score = self._source_score(source_label)
+        now = time.time()
+        with self.frame_lock:
+            active_recent = self.last_update_time is not None and now - self.last_update_time < 10
+            is_active_source = source_id and source_id == self.active_source_id
+            lower_priority_source = (
+                active_recent and not is_active_source and score < self.active_source_score
+            )
+            if lower_priority_source:
+                return False
+
+        image = np.frombuffer(jpeg_bytes, dtype=np.uint8)
+        frame = cv2.imdecode(image, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise ValueError("failed to decode browser camera frame")
+        with self.frame_lock:
+            self.latest_frame = frame
+            self.last_update_time = now
+            if source_id:
+                self.active_source_id = source_id
+                self.active_source_score = score
+        return True
+
+    def get_latest_frame(self) -> NDArray[np.uint8] | None:
+        with self.frame_lock:
+            if self.latest_frame is None:
+                return None
+            return self.latest_frame.copy()
+
+    def get_face_tracking_offsets(
+        self,
+    ) -> Tuple[float, float, float, float, float, float]:
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+    def set_head_tracking_enabled(self, enabled: bool) -> None:
+        logger.info("Browser camera does not support native head tracking; requested enabled=%s", enabled)
 
 
 class CameraWorker:
@@ -172,7 +249,10 @@ class CameraWorker:
                                 ]
 
                         # No face detected while tracking enabled - set face lost timestamp
-                        elif self.last_face_detected_time is None or self.last_face_detected_time == current_time:
+                        elif (
+                            self.last_face_detected_time is None
+                            or self.last_face_detected_time == current_time
+                        ):
                             # Only update if we haven't already set a face lost time
                             # (current_time check prevents overriding the disable-triggered timestamp)
                             pass
