@@ -136,7 +136,7 @@ body {
   border-color: rgba(76, 224, 179, 0.4);
 }
 
-.hidden { display: none; }
+.hidden { display: none !important; }
 label {
   display: block;
   margin: 8px 0 6px;

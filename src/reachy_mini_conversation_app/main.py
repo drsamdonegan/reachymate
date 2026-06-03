@@ -91,7 +91,8 @@ def _build_connection_help(args: argparse.Namespace, custom_dashboard_mode: bool
             f"Start the local daemon first: `{_recommended_daemon_command()}`",
             launch_hint,
             f"Verify the daemon responds on {DAEMON_URL}.",
-            "If the daemon dashboard on :8000 is up but the app still cannot connect on macOS, retry the daemon with "
+            "If the daemon dashboard on :8000 is up but the app still cannot connect on macOS, "
+            "retry the daemon with "
             f"`{MACOS_DAEMON_START_COMMAND}`.",
             "If the daemon cannot find the robot, retry with `--log-level DEBUG` or `--serialport <device>`.",
         ]
@@ -128,7 +129,7 @@ def run(
     instance_path: Optional[str] = None,
 ) -> None:
     """Run the Reachy Mini conversation app."""
-    # Putting these dependencies here makes the dashboard faster to load when the conversation app is installed
+    # Keep these imports here so the dashboard loads faster when the app is installed.
     from reachy_mini_conversation_app.audio.head_wobbler import HeadWobbler
     from reachy_mini_conversation_app.console import LocalStream
     from reachy_mini_conversation_app.moves import MovementManager
@@ -175,12 +176,18 @@ def run(
     robot_status = robot.client.get_status()
     if _status_field(robot_status, "simulation_enabled", False) and not args.gradio:
         logger.error(
-            "Simulation mode requires Gradio interface. Please use --gradio flag when running in simulation mode.",
+            "Simulation mode requires Gradio interface. Please use --gradio flag "
+            "when running in simulation mode.",
         )
         robot.client.disconnect()
         sys.exit(1)
 
     camera_worker, _, vision_manager = handle_vision_stuff(args, robot)
+    if getattr(args, "browser_camera", False):
+        from reachy_mini_conversation_app.camera_worker import BrowserCameraWorker
+
+        camera_worker = BrowserCameraWorker()
+        logger.info("Using browser-fed camera frames for dashboard snapshots and gpt-realtime camera tool.")
 
     movement_manager = MovementManager(
         current_robot=robot,

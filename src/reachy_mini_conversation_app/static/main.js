@@ -508,15 +508,165 @@ async function init() {
 
 // ===== Camera Feed =====
 let cameraInterval = null;
+let browserCameraStream = null;
+let browserUploadInterval = null;
+let browserCameraDeviceId = null;
+const browserCameraSourceId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+async function blobToDataUrl(blob) {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 function startCameraFeed() {
   const img = document.getElementById("camera-feed");
   const offline = document.getElementById("camera-offline");
   const takeBtn = document.getElementById("take-photo");
   const photoStatus = document.getElementById("photo-status");
   const gallery = document.getElementById("photo-gallery");
+  const deviceRow = document.getElementById("camera-device-row");
+  const deviceSelect = document.getElementById("camera-device-select");
   if (!img) return;
 
   let consecutive_fails = 0;
+  let browserUploadInFlight = false;
+
+  function cameraPreferenceScore(device) {
+    const label = (device.label || "").toLowerCase();
+    let score = 0;
+    if (/(reachy|pollen)/.test(label)) score += 100;
+    if (/(usb|uvc|external)/.test(label)) score += 40;
+    if (/(facetime|built-in|continuity|iphone|ipad)/.test(label)) score -= 60;
+    return score;
+  }
+
+  function preferredCameraDevice(cameras, currentDeviceId) {
+    if (!cameras.length) return null;
+    const ranked = [...cameras].sort((a, b) => cameraPreferenceScore(b) - cameraPreferenceScore(a));
+    const best = ranked[0];
+    if (!best || best.deviceId === currentDeviceId) return null;
+    return cameraPreferenceScore(best) > 0 ? best : null;
+  }
+
+  function stopBrowserCameraUpload() {
+    if (browserUploadInterval) {
+      clearInterval(browserUploadInterval);
+      browserUploadInterval = null;
+    }
+    if (browserCameraStream) {
+      browserCameraStream.getTracks().forEach((track) => track.stop());
+      browserCameraStream = null;
+    }
+  }
+
+  async function populateCameraDevices(selectedId) {
+    if (!deviceSelect || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return [];
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cameras = devices.filter((device) => device.kind === "videoinput");
+    deviceSelect.innerHTML = "";
+    cameras.forEach((device, index) => {
+      const option = document.createElement("option");
+      option.value = device.deviceId;
+      option.textContent = device.label || `Camera ${index + 1}`;
+      option.selected = device.deviceId === selectedId;
+      deviceSelect.appendChild(option);
+    });
+    if (deviceRow) show(deviceRow, cameras.length > 1);
+    return cameras;
+  }
+
+  async function startBrowserCameraUpload(deviceId = browserCameraDeviceId) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      offline.textContent = "Browser camera unavailable";
+      return;
+    }
+
+    stopBrowserCameraUpload();
+
+    try {
+      const videoConstraints = {
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      };
+      if (deviceId) {
+        videoConstraints.deviceId = { exact: deviceId };
+      }
+
+      browserCameraStream = await navigator.mediaDevices.getUserMedia({
+        video: videoConstraints,
+        audio: false,
+      });
+
+      const video = document.createElement("video");
+      video.muted = true;
+      video.playsInline = true;
+      video.srcObject = browserCameraStream;
+      await video.play();
+
+      const track = browserCameraStream.getVideoTracks()[0];
+      browserCameraDeviceId = (track && track.getSettings().deviceId) || deviceId || null;
+      const cameras = await populateCameraDevices(browserCameraDeviceId);
+      const selectedCamera = cameras.find((camera) => camera.deviceId === browserCameraDeviceId);
+      const sourceLabel = selectedCamera ? selectedCamera.label : "";
+      if (!deviceId) {
+        const preferred = preferredCameraDevice(cameras, browserCameraDeviceId);
+        if (preferred) {
+          browserCameraDeviceId = preferred.deviceId;
+          return startBrowserCameraUpload(browserCameraDeviceId);
+        }
+      }
+
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+
+      browserUploadInterval = setInterval(async () => {
+        if (browserUploadInFlight || !ctx || video.readyState < 2) return;
+        browserUploadInFlight = true;
+        try {
+          const width = video.videoWidth || 640;
+          const height = video.videoHeight || 480;
+          canvas.width = width;
+          canvas.height = height;
+          ctx.drawImage(video, 0, 0, width, height);
+          const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.78));
+          if (!blob) return;
+          const image_b64 = await blobToDataUrl(blob);
+          await fetchWithTimeout(
+            "/camera/browser-frame",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                image_b64,
+                source_id: browserCameraSourceId,
+                source_label: sourceLabel,
+              }),
+            },
+            3000,
+          );
+        } catch {
+          // The snapshot poll below will keep the visible state accurate.
+        } finally {
+          browserUploadInFlight = false;
+        }
+      }, 500);
+    } catch {
+      offline.textContent = "Camera permission needed";
+      img.style.display = "none";
+      offline.style.display = "flex";
+    }
+  }
+
+  if (deviceSelect) {
+    deviceSelect.addEventListener("change", () => {
+      browserCameraDeviceId = deviceSelect.value || null;
+      startBrowserCameraUpload(browserCameraDeviceId);
+    });
+  }
 
   async function refreshFrame() {
     try {
@@ -545,6 +695,13 @@ function startCameraFeed() {
       }
     }
   }
+
+  fetchWithTimeout("/camera/source", {}, 2000)
+    .then((resp) => resp.ok ? resp.json() : null)
+    .then((data) => {
+      if (data && data.browser_input) startBrowserCameraUpload();
+    })
+    .catch(() => {});
 
   refreshFrame();
   cameraInterval = setInterval(refreshFrame, 500);

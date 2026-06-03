@@ -1,7 +1,7 @@
 import asyncio
 import logging
-from typing import Any
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -33,6 +33,41 @@ def test_format_timestamp_uses_wall_clock() -> None:
     year = int(formatted[1:5])
     assert year == datetime.now(timezone.utc).year
 
+
+def test_realtime_session_config_uses_realtime_2_ga_shape(monkeypatch: Any) -> None:
+    """Realtime 2 should use the GA session shape plus low reasoning by default."""
+    monkeypatch.setattr(rt_mod.config, "MODEL_NAME", "gpt-realtime-2")
+    monkeypatch.setattr(rt_mod.config, "REALTIME_REASONING_EFFORT", "low")
+    monkeypatch.setattr(rt_mod.config, "REALTIME_TRANSCRIPTION_MODEL", "gpt-4o-transcribe")
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "instructions")
+    monkeypatch.setattr(rt_mod, "get_session_voice", lambda: "cedar")
+    monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [{"type": "function", "name": "camera"}])
+
+    session = rt_mod.build_realtime_session_config()
+
+    assert session["type"] == "realtime"
+    assert session["reasoning"] == {"effort": "low"}
+    assert session["audio"]["input"]["format"] == {"type": "audio/pcm", "rate": 24000}
+    assert session["audio"]["input"]["transcription"] == {"model": "gpt-4o-transcribe", "language": "en"}
+    assert session["audio"]["output"]["format"] == {"type": "audio/pcm", "rate": 24000}
+    assert session["audio"]["output"]["voice"] == "cedar"
+    assert session["tools"] == [{"type": "function", "name": "camera"}]
+    assert session["tool_choice"] == "auto"
+
+
+def test_realtime_reasoning_omitted_for_legacy_models(monkeypatch: Any) -> None:
+    """Do not send Realtime 2-only settings when the model is overridden."""
+    monkeypatch.setattr(rt_mod.config, "MODEL_NAME", "gpt-realtime")
+    monkeypatch.setattr(rt_mod.config, "REALTIME_REASONING_EFFORT", "low")
+    monkeypatch.setattr(rt_mod, "get_session_instructions", lambda: "instructions")
+    monkeypatch.setattr(rt_mod, "get_session_voice", lambda: "cedar")
+    monkeypatch.setattr(rt_mod, "get_tool_specs", lambda: [])
+
+    session = rt_mod.build_realtime_session_config()
+
+    assert "reasoning" not in session
+
+
 @pytest.mark.asyncio
 async def test_start_up_retries_on_abrupt_close(monkeypatch: Any, caplog: Any) -> None:
     """First connection dies with ConnectionClosedError during iteration -> retried.
@@ -51,6 +86,7 @@ async def test_start_up_retries_on_abrupt_close(monkeypatch: Any, caplog: Any) -
     monkeypatch.setattr(asyncio, "sleep", _fast_sleep, raising=False)
 
     attempt_counter = {"n": 0}
+    connect_models = []
 
     class FakeConn:
         """Minimal realtime connection stub."""
@@ -91,6 +127,7 @@ async def test_start_up_retries_on_abrupt_close(monkeypatch: Any, caplog: Any) -
 
     class FakeRealtime:
         def connect(self, **_kw: Any) -> FakeConn:
+            connect_models.append(_kw.get("model"))
             attempt_counter["n"] += 1
             mode = "raise_on_iter" if attempt_counter["n"] == 1 else "clean"
             return FakeConn(mode)
@@ -110,6 +147,7 @@ async def test_start_up_retries_on_abrupt_close(monkeypatch: Any, caplog: Any) -
 
     # Validate: two attempts total (fail -> retry -> succeed), and connection cleared
     assert attempt_counter["n"] == 2
+    assert connect_models == ["gpt-realtime-2", "gpt-realtime-2"]
     assert handler.connection is None
 
     # Optional: confirm we logged the unexpected close once

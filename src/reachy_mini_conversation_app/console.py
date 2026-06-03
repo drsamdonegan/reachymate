@@ -9,33 +9,32 @@ single password field to set ``OPENAI_API_KEY``. Once set, we persist it to the
 app instance's ``.env`` file (if available) and proceed to start streaming.
 """
 
+import asyncio
+import base64
+import json
+import logging
 import os
 import sys
-import json
-import time
-import base64
-import asyncio
-import logging
 import threading
-from typing import Any, Dict, List, Optional
+import time
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import cv2
 from fastrtc import AdditionalOutputs, audio_to_float32
-from scipy.signal import resample
-
 from reachy_mini import ReachyMini
 from reachy_mini.media.media_manager import MediaBackend
-from reachy_mini_conversation_app.config import config
-from reachy_mini_conversation_app.openai_realtime import OpenaiRealtimeHandler
-from reachy_mini_conversation_app.headless_personality_ui import mount_personality_routes
+from scipy.signal import resample
 
+from reachy_mini_conversation_app.config import config
+from reachy_mini_conversation_app.headless_personality_ui import mount_personality_routes
+from reachy_mini_conversation_app.openai_realtime import OpenaiRealtimeHandler
 
 try:
     # FastAPI is provided by the Reachy Mini Apps runtime
     from fastapi import FastAPI, Response
-    from pydantic import BaseModel
     from fastapi.responses import FileResponse, JSONResponse
+    from pydantic import BaseModel
 except Exception:  # pragma: no cover - only loaded when settings_app is used
     FastAPI = object  # type: ignore
     FileResponse = object  # type: ignore
@@ -339,6 +338,45 @@ class LocalStream:
 
         # ---- Camera & Chat endpoints for the live dashboard ----
 
+        class BrowserFramePayload(BaseModel):
+            image_b64: str
+            source_id: str | None = None
+            source_label: str | None = None
+
+        # GET /camera/source -> tell the browser whether it should push frames.
+        @self._settings_app.get("/camera/source")
+        def _camera_source() -> JSONResponse:
+            cw = self.handler.deps.camera_worker
+            return JSONResponse({
+                "available": cw is not None,
+                "browser_input": callable(getattr(cw, "set_frame_from_jpeg", None)),
+            })
+
+        # POST /camera/browser-frame -> latest browser-captured JPEG.
+        @self._settings_app.post("/camera/browser-frame")
+        def _camera_browser_frame(payload: BrowserFramePayload) -> JSONResponse:
+            cw = self.handler.deps.camera_worker
+            setter = getattr(cw, "set_frame_from_jpeg", None)
+            if not callable(setter):
+                return JSONResponse({"ok": False, "error": "browser_camera_disabled"}, status_code=400)
+
+            raw = (payload.image_b64 or "").strip()
+            if "," in raw:
+                raw = raw.split(",", 1)[1]
+            if not raw:
+                return JSONResponse({"ok": False, "error": "empty_frame"}, status_code=400)
+
+            try:
+                accepted = setter(
+                    base64.b64decode(raw, validate=True),
+                    source_id=(payload.source_id or "").strip() or None,
+                    source_label=(payload.source_label or "").strip() or None,
+                )
+            except Exception as e:
+                logger.debug("browser camera frame rejected: %s", e)
+                return JSONResponse({"ok": False, "error": "invalid_frame"}, status_code=400)
+            return JSONResponse({"ok": True, "accepted": bool(accepted)})
+
         # GET /camera/snapshot -> JPEG image of what Reachy sees right now
         @self._settings_app.get("/camera/snapshot")
         def _camera_snapshot() -> Response:
@@ -596,7 +634,10 @@ class LocalStream:
                     conn = self.handler.connection
                     if conn is None:
                         return
-                    from reachy_mini_conversation_app.prompts import get_session_instructions, get_session_voice
+                    from reachy_mini_conversation_app.prompts import (
+                        get_session_instructions,
+                        get_session_voice,
+                    )
                     instructions = get_session_instructions()
                     voice = get_session_voice()
                     await conn.session.update(session={
@@ -754,7 +795,7 @@ class LocalStream:
         if self._robot.media.backend == MediaBackend.GSTREAMER:
             # Directly flush gstreamer audio pipe
             self._robot.media.audio.clear_player()
-        elif self._robot.media.backend == MediaBackend.DEFAULT or self._robot.media.backend == MediaBackend.DEFAULT_NO_VIDEO:
+        elif self._robot.media.backend in (MediaBackend.DEFAULT, MediaBackend.DEFAULT_NO_VIDEO):
             self._robot.media.audio.clear_output_buffer()
         self.handler.output_queue = asyncio.Queue()
 

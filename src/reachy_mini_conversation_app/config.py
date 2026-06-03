@@ -1,8 +1,7 @@
-import os
 import logging
+import os
 
 from dotenv import find_dotenv, load_dotenv
-
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +23,21 @@ class Config:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # The key is downloaded in console.py if needed
 
     # Optional
-    MODEL_NAME = os.getenv("MODEL_NAME", "gpt-realtime")
+    MODEL_NAME = os.getenv("MODEL_NAME", "gpt-realtime-2")
+    REALTIME_REASONING_EFFORT = os.getenv("REALTIME_REASONING_EFFORT", "low")
+    REALTIME_TRANSCRIPTION_MODEL = os.getenv("REALTIME_TRANSCRIPTION_MODEL", "gpt-4o-transcribe")
     HF_HOME = os.getenv("HF_HOME", "./cache")
     LOCAL_VISION_MODEL = os.getenv("LOCAL_VISION_MODEL", "HuggingFaceTB/SmolVLM2-2.2B-Instruct")
     HF_TOKEN = os.getenv("HF_TOKEN")  # Optional, falls back to hf auth login if not set
 
-    logger.debug(f"Model: {MODEL_NAME}, HF_HOME: {HF_HOME}, Vision Model: {LOCAL_VISION_MODEL}")
+    logger.debug(
+        "Model: %s, Realtime reasoning: %s, Transcription: %s, HF_HOME: %s, Vision Model: %s",
+        MODEL_NAME,
+        REALTIME_REASONING_EFFORT,
+        REALTIME_TRANSCRIPTION_MODEL,
+        HF_HOME,
+        LOCAL_VISION_MODEL,
+    )
 
     REACHY_MINI_CUSTOM_PROFILE = os.getenv("REACHY_MINI_CUSTOM_PROFILE")
     logger.debug(f"Custom Profile: {REACHY_MINI_CUSTOM_PROFILE}")

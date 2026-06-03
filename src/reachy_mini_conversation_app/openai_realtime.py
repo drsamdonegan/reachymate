@@ -1,29 +1,28 @@
-import json
-import base64
-import random
 import asyncio
+import base64
+import json
 import logging
-from typing import Any, Final, Tuple, Literal, Optional
-from pathlib import Path
+import random
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Final, Literal, Optional, Tuple
 
 import cv2
-import numpy as np
 import gradio as gr
-from openai import AsyncOpenAI
-from fastrtc import AdditionalOutputs, AsyncStreamHandler, wait_for_item, audio_to_int16
+import numpy as np
+from fastrtc import AdditionalOutputs, AsyncStreamHandler, audio_to_int16, wait_for_item
 from numpy.typing import NDArray
+from openai import AsyncOpenAI
 from scipy.signal import resample
 from websockets.exceptions import ConnectionClosedError
 
 from reachy_mini_conversation_app.config import config
-from reachy_mini_conversation_app.prompts import get_session_voice, get_session_instructions
+from reachy_mini_conversation_app.prompts import get_session_instructions, get_session_voice
 from reachy_mini_conversation_app.tools.core_tools import (
     ToolDependencies,
-    get_tool_specs,
     dispatch_tool_call,
+    get_tool_specs,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +30,65 @@ OPEN_AI_INPUT_SAMPLE_RATE: Final[Literal[24000]] = 24000
 OPEN_AI_OUTPUT_SAMPLE_RATE: Final[Literal[24000]] = 24000
 
 
+def _uses_realtime_2(model_name: str | None) -> bool:
+    """Return whether the configured model supports Realtime 2 reasoning settings."""
+    return (model_name or "").startswith("gpt-realtime-2")
+
+
+def _realtime_reasoning_config(model_name: str | None) -> dict[str, str] | None:
+    effort = str(getattr(config, "REALTIME_REASONING_EFFORT", "") or "").strip()
+    if not effort or not _uses_realtime_2(model_name):
+        return None
+    return {"effort": effort}
+
+
+def build_realtime_session_config() -> dict[str, Any]:
+    """Build the GA Realtime voice-agent session payload."""
+    model_name = str(config.MODEL_NAME)
+    session: dict[str, Any] = {
+        "type": "realtime",
+        "instructions": get_session_instructions(),
+        "audio": {
+            "input": {
+                "format": {
+                    "type": "audio/pcm",
+                    "rate": OPEN_AI_INPUT_SAMPLE_RATE,
+                },
+                "transcription": {
+                    "model": config.REALTIME_TRANSCRIPTION_MODEL,
+                    "language": "en",
+                },
+                "turn_detection": {
+                    "type": "server_vad",
+                    "interrupt_response": True,
+                },
+            },
+            "output": {
+                "format": {
+                    "type": "audio/pcm",
+                    "rate": OPEN_AI_OUTPUT_SAMPLE_RATE,
+                },
+                "voice": get_session_voice(),
+            },
+        },
+        "tools": get_tool_specs(),  # type: ignore[typeddict-item]
+        "tool_choice": "auto",
+    }
+    reasoning = _realtime_reasoning_config(model_name)
+    if reasoning is not None:
+        session["reasoning"] = reasoning
+    return session
+
+
 class OpenaiRealtimeHandler(AsyncStreamHandler):
     """An OpenAI realtime handler for fastrtc Stream."""
 
-    def __init__(self, deps: ToolDependencies, gradio_mode: bool = False, instance_path: Optional[str] = None):
+    def __init__(
+        self,
+        deps: ToolDependencies,
+        gradio_mode: bool = False,
+        instance_path: Optional[str] = None,
+    ):
         """Initialize the handler."""
         super().__init__(
             expected_layout="mono",
@@ -53,7 +107,9 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         self.input_sample_rate = OPEN_AI_INPUT_SAMPLE_RATE
 
         self.connection: Any = None
-        self.output_queue: "asyncio.Queue[Tuple[int, NDArray[np.int16]] | AdditionalOutputs]" = asyncio.Queue()
+        self.output_queue: "asyncio.Queue[Tuple[int, NDArray[np.int16]] | AdditionalOutputs]" = (
+            asyncio.Queue()
+        )
 
         self.last_activity_time = asyncio.get_event_loop().time()
         self.start_time = asyncio.get_event_loop().time()
@@ -93,7 +149,9 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
             set_custom_profile(profile)
             logger.info(
-                "Set custom profile to %r (config=%r)", profile, getattr(_config, "REACHY_MINI_CUSTOM_PROFILE", None)
+                "Set custom profile to %r (config=%r)",
+                profile,
+                getattr(_config, "REACHY_MINI_CUSTOM_PROFILE", None),
             )
 
             try:
@@ -140,7 +198,9 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
             await asyncio.sleep(self.partial_debounce_delay)
             # Only emit if this is still the latest partial (by sequence number)
             if self.partial_transcript_sequence == sequence:
-                await self.output_queue.put(AdditionalOutputs({"role": "user_partial", "content": transcript}))
+                await self.output_queue.put(
+                    AdditionalOutputs({"role": "user_partial", "content": transcript})
+                )
                 logger.debug(f"Debounced partial emitted: {transcript}")
         except asyncio.CancelledError:
             logger.debug("Debounced partial cancelled")
@@ -178,7 +238,12 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                 return
             except ConnectionClosedError as e:
                 # Abrupt close (e.g., "no close frame received or sent") → retry
-                logger.warning("Realtime websocket closed unexpectedly (attempt %d/%d): %s", attempt, max_attempts, e)
+                logger.warning(
+                    "Realtime websocket closed unexpectedly (attempt %d/%d): %s",
+                    attempt,
+                    max_attempts,
+                    e,
+                )
                 if attempt < max_attempts:
                     # exponential backoff with jitter
                     base_delay = 2 ** (attempt - 1)  # 1s, 2s, 4s, 8s, etc.
@@ -233,36 +298,11 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         """Establish and manage a single realtime session."""
         async with self.client.realtime.connect(model=config.MODEL_NAME) as conn:
             try:
-                await conn.session.update(
-                    session={
-                        "type": "realtime",
-                        "instructions": get_session_instructions(),
-                        "audio": {
-                            "input": {
-                                "format": {
-                                    "type": "audio/pcm",
-                                    "rate": self.input_sample_rate,
-                                },
-                                "transcription": {"model": "gpt-4o-transcribe", "language": "en"},
-                                "turn_detection": {
-                                    "type": "server_vad",
-                                    "interrupt_response": True,
-                                },
-                            },
-                            "output": {
-                                "format": {
-                                    "type": "audio/pcm",
-                                    "rate": self.output_sample_rate,
-                                },
-                                "voice": get_session_voice(),
-                            },
-                        },
-                        "tools": get_tool_specs(),  # type: ignore[typeddict-item]
-                        "tool_choice": "auto",
-                    },
-                )
+                await conn.session.update(session=build_realtime_session_config())
                 logger.info(
-                    "Realtime session initialized with profile=%r voice=%r",
+                    "Realtime session initialized with model=%r reasoning=%r profile=%r voice=%r",
+                    config.MODEL_NAME,
+                    _realtime_reasoning_config(config.MODEL_NAME),
                     getattr(config, "REACHY_MINI_CUSTOM_PROFILE", None),
                     get_session_voice(),
                 )
@@ -343,12 +383,16 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                         except asyncio.CancelledError:
                             pass
 
-                    await self.output_queue.put(AdditionalOutputs({"role": "user", "content": event.transcript}))
+                    await self.output_queue.put(
+                        AdditionalOutputs({"role": "user", "content": event.transcript})
+                    )
 
                 # Handle assistant transcription
                 if event.type in ("response.audio_transcript.done", "response.output_audio_transcript.done"):
                     logger.debug(f"Assistant transcript: {event.transcript}")
-                    await self.output_queue.put(AdditionalOutputs({"role": "assistant", "content": event.transcript}))
+                    await self.output_queue.put(
+                        AdditionalOutputs({"role": "assistant", "content": event.transcript})
+                    )
 
                 # Handle audio delta
                 if event.type in ("response.audio.delta", "response.output_audio.delta"):
@@ -424,7 +468,7 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                         if self.deps.camera_worker is not None:
                             np_img = self.deps.camera_worker.get_latest_frame()
                             if np_img is not None:
-                                # Camera frames are BGR from OpenCV; convert so Gradio displays correct colors.
+                                # Camera frames are BGR; convert so Gradio displays correct colors.
                                 rgb_frame = cv2.cvtColor(np_img, cv2.COLOR_BGR2RGB)
                             else:
                                 rgb_frame = None
@@ -446,7 +490,9 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                     else:
                         await self.connection.response.create(
                             response={
-                                "instructions": "Use the tool result just returned and answer concisely in speech.",
+                                "instructions": (
+                                    "Use the tool result just returned and answer concisely in speech."
+                                ),
                             },
                         )
 
@@ -463,7 +509,10 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                     logger.error("Realtime error [%s]: %s (raw=%s)", code, msg, err)
 
                     # Only show user-facing errors, not internal state errors
-                    if code not in ("input_audio_buffer_commit_empty", "conversation_already_has_active_response"):
+                    if code not in (
+                        "input_audio_buffer_commit_empty",
+                        "conversation_already_has_active_response",
+                    ):
                         await self.output_queue.put(
                             AdditionalOutputs({"role": "assistant", "content": f"[error] {msg}"})
                         )
@@ -496,7 +545,10 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
         # Resample if needed
         if self.input_sample_rate != input_sample_rate:
-            audio_frame = resample(audio_frame, int(len(audio_frame) * self.input_sample_rate / input_sample_rate))
+            audio_frame = resample(
+                audio_frame,
+                int(len(audio_frame) * self.input_sample_rate / input_sample_rate),
+            )
 
         # Cast if needed
         audio_frame = audio_to_int16(audio_frame)
@@ -609,7 +661,11 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
                                 for item in v:
                                     if isinstance(item, str):
                                         candidates.add(item)
-                                    elif isinstance(item, dict) and "name" in item and isinstance(item["name"], str):
+                                    elif (
+                                        isinstance(item, dict)
+                                        and "name" in item
+                                        and isinstance(item["name"], str)
+                                    ):
                                         candidates.add(item["name"])
                             else:
                                 _collect(v)
@@ -633,7 +689,12 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         """Send an idle signal to the openai server."""
         logger.debug("Sending idle signal")
         self.is_idle_tool_call = True
-        timestamp_msg = f"[Idle time update: {self.format_timestamp()} - No activity for {idle_duration:.1f}s] You've been idle for a while. Feel free to get creative - dance, show an emotion, look around, do nothing, or just be yourself!"
+        timestamp_msg = (
+            f"[Idle time update: {self.format_timestamp()} - "
+            f"No activity for {idle_duration:.1f}s] You've been idle for a while. "
+            "Feel free to get creative - dance, show an emotion, look around, "
+            "do nothing, or just be yourself!"
+        )
         if not self.connection:
             logger.debug("No connection, cannot send idle signal")
             return
@@ -646,7 +707,10 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
         )
         await self.connection.response.create(
             response={
-                "instructions": "You MUST respond with function calls only - no speech or text. Choose appropriate actions for idle behavior.",
+                "instructions": (
+                    "You MUST respond with function calls only - no speech or text. "
+                    "Choose appropriate actions for idle behavior."
+                ),
                 "tool_choice": "required",
             },
         )
