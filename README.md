@@ -26,7 +26,7 @@ uv run python -m app.scripts.mock_frontdesk
 Admin routes are disabled unless `ALLOW_DEV_ENDPOINTS=true` and are never registered in production. Real hardware additionally requires camera/microphone permissions, measured calibration and an available local daemon:
 
 ```sh
-.venv/bin/reachy-mini-daemon --no-media --no-wake-up-on-start --goto-sleep-on-stop --fastapi-host 127.0.0.1 --dataset-update-interval 0 --no-preload-datasets
+.venv/bin/python -m app.scripts.run_reachy_daemon --no-media --no-wake-up-on-start --goto-sleep-on-stop --fastapi-host 127.0.0.1 --dataset-update-interval 0 --no-preload-datasets
 .venv/bin/python -m app.scripts.run_reachy_live_test --demo
 ```
 

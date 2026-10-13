@@ -52,6 +52,7 @@ async def test_supervision_recovers_an_exception_and_records_restart():
 
 
 def test_loopback_daemon_and_no_origin_and_stop_command():
+    pytest.importorskip("reachy_mini")
     with pytest.raises(ValueError):
         DaemonClient("192.168.1.2")
     calls = []
@@ -141,6 +142,7 @@ async def test_motion_serialises_goto_and_streaming_and_clamps():
 
 @pytest.mark.asyncio
 async def test_power_call_order_and_sag_disable_finally():
+    pytest.importorskip("reachy_mini")
     from reachy_mini.reachy_mini import SLEEP_HEAD_POSE
 
     calls = []

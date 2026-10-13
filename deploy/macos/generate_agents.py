@@ -25,7 +25,9 @@ def agents(root: Path, logs: Path):
     }
     commands = {
         "daemon": [
-            str(root / ".venv-daemon/bin/reachy-mini-daemon"),
+            str(root / ".venv-daemon/bin/python"),
+            "-m",
+            "app.scripts.run_reachy_daemon",
             "--no-media",
             "--no-wake-up-on-start",
             "--goto-sleep-on-stop",
