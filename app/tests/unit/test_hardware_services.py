@@ -110,6 +110,7 @@ def test_channel_metrics_do_not_mistake_identical_channels_for_spatial_audio():
 
 @pytest.mark.asyncio
 async def test_motion_serialises_goto_and_streaming_and_clamps():
+    pytest.importorskip("reachy_mini")
     from reachy_mini.utils import create_head_pose
     from reachy_mini.utils.rotation import Rotation
 

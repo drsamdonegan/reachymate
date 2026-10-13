@@ -50,6 +50,7 @@ def test_keyword_tokens_exist():
 
 
 def test_realtime_sdk_stop_transport_contract():
+    pytest.importorskip("reachy_mini")
     from reachy_mini.io.ws_client import WSClient
 
     assert "cmd" in inspect.signature(WSClient.send_command).parameters

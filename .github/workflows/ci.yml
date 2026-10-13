@@ -20,10 +20,25 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install locked development environment
-        run: uv sync --frozen --extra dev
+        run: uv sync --frozen --extra dev --extra audio --extra vision --extra skills
       - name: Lint
         run: uv run ruff check app
       - name: Test canonical runtime
         run: uv run pytest app/tests -q
       - name: Verify wheel builds
         run: uv build
+
+  macos-sdk-contracts:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install full locked SDK test environment
+        run: uv sync --frozen --extra dev --extra audio --extra vision --extra reachy --extra skills
+      - name: Verify SDK and canonical runtime without hardware
+        run: uv run pytest app/tests -q
