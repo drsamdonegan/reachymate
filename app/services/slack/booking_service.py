@@ -15,6 +15,7 @@ from app.services.slack.schemas import BookingHelpRequest, CoworkingBooking
 
 
 class BookingClient(Protocol):
+    async def healthcheck(self) -> bool: ...
     async def get_active_booking(self, *, slack_user_id: str, now: datetime) -> BookingResult: ...
     async def send_booking_help(self, request: BookingHelpRequest) -> bool: ...
 
@@ -35,9 +36,24 @@ class MlaiBookingClient:
     async def close(self) -> None:
         await self.client.aclose()
 
+    async def healthcheck(self) -> bool:
+        """Verify that the booking backend is actually ready, not merely configured."""
+
+        try:
+            response = await self.client.get("/healthz/ready")
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError):
+            return False
+        if not isinstance(payload, dict):
+            return False
+        return payload.get("ready") is True or payload.get("status") in {"ok", "ready", "healthy"}
+
     async def get_active_booking(self, *, slack_user_id: str, now: datetime) -> BookingResult:
         if not slack_user_id:
-            return BookingResult(status=BookingStatus.USER_NOT_LINKED, active=False, detail="Missing slack_user_id")
+            return BookingResult(
+                status=BookingStatus.USER_NOT_LINKED, active=False, detail="Missing slack_user_id"
+            )
 
         try:
             response = await self.client.get(
@@ -52,8 +68,19 @@ class MlaiBookingClient:
                 detail=f"Booking lookup failed: {exc}",
             )
 
+        try:
+            payload = response.json()
+            if not isinstance(payload, list):
+                raise ValueError("Booking response must be a list")
+            bookings = [CoworkingBooking.model_validate(row) for row in payload]
+        except Exception as exc:
+            return BookingResult(
+                status=BookingStatus.LOOKUP_FAILED,
+                active=False,
+                detail=f"Invalid booking response: {exc}",
+            )
+
         today = now.astimezone(self.timezone).date()
-        bookings = [CoworkingBooking.model_validate(row) for row in response.json()]
         for booking in bookings:
             if booking.status == "booked" and booking.date == today:
                 return BookingResult(
@@ -63,7 +90,9 @@ class MlaiBookingClient:
                     source_booking_id=booking.id,
                     metadata={"bookings_count": len(bookings)},
                 )
-        return BookingResult(status=BookingStatus.NONE, active=False, metadata={"bookings_count": len(bookings)})
+        return BookingResult(
+            status=BookingStatus.NONE, active=False, metadata={"bookings_count": len(bookings)}
+        )
 
     async def send_booking_help(self, request: BookingHelpRequest) -> bool:
         try:
@@ -84,11 +113,16 @@ class MockBookingClient:
         self.fail_lookup = fail_lookup
         self.help_requests: list[dict[str, str]] = []
 
+    async def healthcheck(self) -> bool:
+        return not self.fail_lookup
+
     async def get_active_booking(self, *, slack_user_id: str, now: datetime) -> BookingResult:
         if self.fail_lookup:
             return BookingResult(status=BookingStatus.LOOKUP_FAILED, active=False, detail="mock failure")
         if slack_user_id in self.booked_today:
-            return BookingResult(status=BookingStatus.ACTIVE, active=True, booking_date=now.date(), source_booking_id="mock")
+            return BookingResult(
+                status=BookingStatus.ACTIVE, active=True, booking_date=now.date(), source_booking_id="mock"
+            )
         return BookingResult(status=BookingStatus.NONE, active=False)
 
     async def send_booking_help(self, request: BookingHelpRequest) -> bool:

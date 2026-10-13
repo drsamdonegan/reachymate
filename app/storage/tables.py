@@ -5,7 +5,18 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -20,9 +31,14 @@ class UserRecord(Base):
     slack_display_name: Mapped[str] = mapped_column(String(255))
     company: Mapped[str | None] = mapped_column(String(255), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    biometric_consent: Mapped[bool] = mapped_column(Boolean, default=False)
+    access_revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    greet_by_name: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    embeddings: Mapped[list["FaceEmbeddingRecord"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    embeddings: Mapped[list["FaceEmbeddingRecord"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class FaceEmbeddingRecord(Base):
@@ -33,9 +49,25 @@ class FaceEmbeddingRecord(Base):
     embedding_vector: Mapped[list[float]] = mapped_column(JSON)
     quality_score: Mapped[float] = mapped_column(Float)
     sample_label: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model_id: Mapped[str] = mapped_column(String(128), default="sface-2021dec")
+    model_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    capture_source: Mapped[str] = mapped_column(String(64), default="legacy")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[UserRecord] = relationship(back_populates="embeddings")
+
+
+class BiometricConsentRecord(Base):
+    __tablename__ = "biometric_consents"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    notice_version: Mapped[str] = mapped_column(String(64))
+    notice_sha256: Mapped[str] = mapped_column(String(64))
+    granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    method: Mapped[str] = mapped_column(String(64))
+    operator_id: Mapped[str] = mapped_column(String(128))
+    withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AccessEventRecord(Base):
@@ -52,6 +84,21 @@ class AccessEventRecord(Base):
     salto_result: Mapped[str | None] = mapped_column(String(64), nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class UnlockCommandRecord(Base):
+    __tablename__ = "unlock_commands"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    access_event_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("access_events.id", ondelete="RESTRICT"), unique=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    provider_request_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    detail: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
 
 class SystemHealthRecord(Base):

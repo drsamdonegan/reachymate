@@ -8,11 +8,14 @@ from pathlib import Path
 
 import numpy as np
 
+from app.config import Settings
 from app.services.audio.wakeword import WakeWordDetector
 
 
 def iter_chunks(samples: np.ndarray, chunk_frames: int) -> list[bytes]:
-    return [samples[offset : offset + chunk_frames].tobytes() for offset in range(0, len(samples), chunk_frames)]
+    return [
+        samples[offset : offset + chunk_frames].tobytes() for offset in range(0, len(samples), chunk_frames)
+    ]
 
 
 def main() -> None:
@@ -21,7 +24,18 @@ def main() -> None:
     parser.add_argument("--model-path", default=None)
     args = parser.parse_args()
 
-    detector = WakeWordDetector(args.model_path)
+    settings = Settings()
+    detector = WakeWordDetector(
+        args.model_path or settings.wakeword_model_path,
+        engine=settings.wakeword_engine,
+        vosk_model_path=settings.vosk_model_path,
+        phrase=settings.wake_phrase,
+        sherpa_model_dir=settings.sherpa_kws_model_dir,
+        sherpa_keywords_path=settings.sherpa_kws_keywords_path,
+        sherpa_threshold=settings.sherpa_kws_threshold,
+        sherpa_score=settings.sherpa_kws_score,
+        vosk_fallback_enabled=settings.wakeword_vosk_fallback_enabled,
+    )
     scores: list[float] = []
     for wav_path in args.wav_files:
         with wave.open(str(Path(wav_path)), "rb") as wav_file:

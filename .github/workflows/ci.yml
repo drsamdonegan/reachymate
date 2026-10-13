@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  canonical-app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install locked development environment
+        run: uv sync --frozen --extra dev
+      - name: Lint
+        run: uv run ruff check app
+      - name: Test canonical runtime
+        run: uv run pytest app/tests -q
+      - name: Verify wheel builds
+        run: uv build

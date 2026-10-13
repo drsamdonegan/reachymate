@@ -4,15 +4,19 @@ from __future__ import annotations
 
 from datetime import date
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel
-
 
 app = FastAPI(title="Mock mlai-backend")
 BOOKINGS: dict[str, list[dict[str, str]]] = {
     "UDEMO": [{"id": "booking-demo", "date": date.today().isoformat(), "status": "booked"}],
 }
 HELP_REQUESTS: list[dict[str, str]] = []
+
+
+@app.get("/healthz/ready")
+async def ready():
+    return {"ready": True}
 
 
 @app.get("/api/v1/points/coworking/my-bookings/")
@@ -34,5 +38,7 @@ async def booking_help(payload: BookingHelpRequest):
 
 @app.post("/seed/{slack_user_id}")
 async def seed(slack_user_id: str):
-    BOOKINGS[slack_user_id] = [{"id": f"booking-{slack_user_id}", "date": date.today().isoformat(), "status": "booked"}]
+    BOOKINGS[slack_user_id] = [
+        {"id": f"booking-{slack_user_id}", "date": date.today().isoformat(), "status": "booked"}
+    ]
     return {"seeded": True}

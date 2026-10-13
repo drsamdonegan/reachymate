@@ -32,7 +32,10 @@
         <article class="panel">
           <div class="panel-head">
             <h2>Reachy's View</h2>
-            <button id="simulate-attempt">Simulate Attempt</button>
+            <div class="inline">
+              <button id="start-voice-test">Start Voice Test</button>
+              <button id="simulate-attempt">Test Access Placeholder</button>
+            </div>
           </div>
           <img id="camera-feed" alt="Reachy camera feed" />
           <div id="camera-status" class="muted"></div>
@@ -50,6 +53,7 @@
 
         <article class="panel">
           <h2>Actions</h2>
+          <div id="voice-test-status" class="muted">Say “Hey Reachy” or start a voice test.</div>
           <form id="speech-form" class="stack">
             <label for="speech-text">Test speech</label>
             <div class="inline">
@@ -79,8 +83,16 @@
             <input name="company" placeholder="Company / team" />
           </div>
           <label for="enrollment-files">Face samples</label>
+          <p>Face check-in is optional. Staff or Slack check-in is available without a face template.
+             Templates are stored encrypted and can be withdrawn or deleted. A check happens only after you ask.</p>
+          <p id="biometric-notice">Loading the current face-check notice…</p>
+          <label><input type="checkbox" name="biometric_consent" required /> I choose face check-in and have read the notice.</label>
+          <label><input type="checkbox" name="greet_by_name" /> Roo may use my first name during approved check-in.</label>
+          <input name="operator_id" placeholder="Enrollment operator ID" required />
+          <input name="notice_version" value="biometric-notice-v1" readonly required />
+          <input name="notice_sha256" type="hidden" />
           <input id="enrollment-files" type="file" multiple accept="image/*" required />
-          <button type="submit">Enroll user</button>
+          <button id="enroll-submit" type="submit" disabled>Enroll user</button>
         </form>
         <pre id="enrollment-result" class="output"></pre>
       </section>

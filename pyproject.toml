@@ -11,9 +11,11 @@ requires-python = ">=3.11"
 authors = [{ name = "OpenAI Codex" }]
 dependencies = [
   "alembic>=1.14.0",
+  "cryptography>=46.0.0,<47.0.0",
   "fastapi>=0.115.0",
   "httpx>=0.28.0",
   "numpy>=1.26.0",
+  "openai>=2.30.0,<3.0.0",
   "pillow>=10.4.0",
   "psycopg[binary]>=3.2.0",
   "pydantic>=2.10.0",
@@ -21,24 +23,30 @@ dependencies = [
   "python-dotenv>=1.0.1",
   "python-multipart>=0.0.12",
   "sqlalchemy>=2.0.36",
+  "soxr>=1.0.0,<2.0.0",
   "uvicorn[standard]>=0.32.0",
+  "websockets>=15.0.0,<16.0.0",
 ]
 
 [project.optional-dependencies]
 audio = [
   "onnxruntime>=1.20.0",
-  "openwakeword>=0.6.0",
-  "silero-vad>=5.1.2",
+  "pywebrtc-audio==0.1.0",
+  "sherpa-onnx==1.13.6",
+  "sherpa-onnx-core==1.13.6",
   "sounddevice>=0.5.1",
-  "vosk>=0.3.45",
+  "vosk==0.3.44",
 ]
 vision = [
-  "opencv-python>=4.10.0.84",
+  "opencv-python>=4.10.0.84,<5",
+  "opencv-contrib-python>=4.10.0.84,<5",
+  "mediapipe==1.0.1",
 ]
 reachy = [
-  "eclipse-zenoh~=1.7.0",
-  "reachy-mini>=1.2.3rc1",
+  "reachy-mini==1.11.0",
 ]
+skills = ["mcp==1.30.0"]
+kiosk = ["appnope>=0.1.4", "pyobjc-framework-AVFoundation>=11,<13; sys_platform == 'darwin'"]
 dev = [
   "pytest>=8.3.0",
   "pytest-asyncio>=0.24.0",
@@ -49,15 +57,19 @@ dev = [
 
 [project.scripts]
 reachy-office-bouncer = "app.main:main"
+reachy-live-test = "app.scripts.run_reachy_live_test:main"
 
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.packages.find]
 include = ["app", "app.*"]
+exclude = ["app.tests", "app.tests.*"]
 
 [tool.setuptools.package-data]
 app = [
+  "assets/*",
+  "assets/clips/*",
   "static/*",
   "storage/migrations/*",
   "storage/migrations/versions/*",
@@ -82,3 +94,12 @@ python_version = "3.11"
 packages = ["app"]
 ignore_missing_imports = true
 strict = false
+
+[tool.uv]
+exclude-newer = "2026-09-29T00:00:00Z"
+# Reachy's PyGObject dependency is for its GStreamer media backend. Mini Lite
+# on macOS uses this project's explicit USB `lite_direct` backend instead;
+# resolving PyGObject would require system Cairo/GObject build dependencies.
+override-dependencies = [
+  "pygobject; sys_platform == 'never'",
+]

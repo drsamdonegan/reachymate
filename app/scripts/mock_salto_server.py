@@ -5,7 +5,6 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
-
 app = FastAPI(title="Mock SALTO KS")
 
 
@@ -24,6 +23,6 @@ async def token():
     }
 
 
-@app.post("/sites/{site_id}/locks/{lock_id}/unlock")
+@app.patch("/v1.2/sites/{site_id}/locks/{lock_id}/locking")
 async def unlock(site_id: str, lock_id: str):
-    return {"request_id": f"{site_id}:{lock_id}:unlock", "status": "ok"}
+    return {"request_id": f"{site_id}:{lock_id}:unlock", "locked_state": "open"}

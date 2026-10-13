@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import io
-from datetime import datetime, timezone
 
 import pytest
 from PIL import Image
@@ -24,11 +23,9 @@ def settings(tmp_path) -> Settings:
         reachy_enabled=False,
         mlai_backend_url="http://testserver",
         mlai_backend_api_key="test-key",
-        salto_client_id="test-client",
-        salto_client_secret="test-secret",
-        salto_site_id="site-1",
-        salto_lock_id="lock-1",
         allow_dev_endpoints=True,
+        cooldown_seconds=0,
+        access_mode="enforce",  # legacy simulated actuator tests; hardware default remains shadow
     )
 
 

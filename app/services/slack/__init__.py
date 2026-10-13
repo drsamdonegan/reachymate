@@ -1,2 +1,1 @@
 """Slack-related compatibility layer."""
-

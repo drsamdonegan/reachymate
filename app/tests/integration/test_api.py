@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from app.models.domain import BookingResult, FaceMatchResult, FaceQuality
-from app.models.enums import BookingStatus, FaceQualityFlag
+from app.models.domain import FaceMatchResult, FaceQuality, UnlockResult
+from app.models.enums import Decision, FaceQualityFlag, RuntimeMode
 from app.runtime import AppContext, FakeIdentificationService
-from app.services.salto.locks import MockSaltoClient
 from app.services.slack.booking_service import MockBookingClient
 
 
@@ -15,12 +15,21 @@ class FakeEnrollmentService:
         return {"user_id": "fake-user", "embedding_count": len(payload["samples"])}
 
 
-def build_context(settings, face_result, booking_client=None, salto_client=None) -> AppContext:
+def build_context(
+    settings,
+    face_result,
+    booking_client=None,
+    door_action=None,
+    *,
+    active: bool = True,
+    biometric_consent: bool = True,
+    access_revoked: bool = False,
+) -> AppContext:
     context = AppContext(
         settings=settings,
         identification_service=FakeIdentificationService(face_result),
         booking_client=booking_client or MockBookingClient(),
-        salto_client=salto_client or MockSaltoClient(),
+        door_action=door_action,
     )
     context.enrollment_service = FakeEnrollmentService()
     context.users.upsert(
@@ -29,9 +38,26 @@ def build_context(settings, face_result, booking_client=None, salto_client=None)
         slack_user_id="U123",
         slack_display_name="sam",
         company="MLAI",
-        active=True,
+        active=active,
+        biometric_consent=biometric_consent,
+        access_revoked=access_revoked,
     )
     return context
+
+
+class FailingDoorAction:
+    async def execute_for_event(self, access_event_id: str) -> UnlockResult:
+        return UnlockResult(success=False, detail="placeholder_failed")
+
+
+class NullDetailDoorAction:
+    async def execute_for_event(self, access_event_id: str) -> UnlockResult:
+        return UnlockResult(success=False, detail=None)
+
+
+class RaisingDoorAction:
+    async def execute_for_event(self, access_event_id: str) -> UnlockResult:
+        raise RuntimeError("provider exploded")
 
 
 def test_health_and_events_endpoints(settings, known_face_result: FaceMatchResult) -> None:
@@ -48,11 +74,34 @@ def test_health_and_events_endpoints(settings, known_face_result: FaceMatchResul
     assert events.status_code == 200
 
 
+def test_readiness_returns_503_when_access_safeguards_are_missing(settings) -> None:
+    app = create_app(settings, context_factory=lambda current: AppContext(settings=current))
+
+    with TestClient(app) as client:
+        ready = client.get("/healthz/ready")
+
+    assert ready.status_code == 503
+    assert ready.json()["access_ready"] is False
+    assert ready.json()["components"]["face_liveness"] == "ERROR"
+
+
+def test_voice_test_endpoint_reports_disabled_realtime(settings) -> None:
+    app = create_app(settings, context_factory=lambda current: AppContext(settings=current))
+
+    with TestClient(app) as client:
+        response = client.post("/api/admin/test-conversation")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Realtime voice is not enabled"
+
+
 def test_access_attempt_allows_booked_user(settings, known_face_result: FaceMatchResult) -> None:
     booking_client = MockBookingClient(booked_today={"U123"})
     app = create_app(
         settings,
-        context_factory=lambda current: build_context(current, known_face_result, booking_client=booking_client),
+        context_factory=lambda current: build_context(
+            current, known_face_result, booking_client=booking_client
+        ),
     )
 
     with TestClient(app) as client:
@@ -61,6 +110,11 @@ def test_access_attempt_allows_booked_user(settings, known_face_result: FaceMatc
 
     assert response.status_code == 200
     assert events[0]["reason_code"] == "ALLOW_ACTIVE_BOOKING"
+    assert events[0]["door_action_result"] == "placeholder_would_open"
+    assert events[0]["metadata"]["unlock_result"] == {
+        "placeholder": True,
+        "actuated": False,
+    }
 
 
 def test_access_attempt_denies_unknown_face(settings) -> None:
@@ -109,16 +163,17 @@ def test_access_attempt_denies_multiple_faces(settings) -> None:
     assert events[0]["reason_code"] == "DENY_MULTIPLE_FACES"
 
 
-def test_access_attempt_denies_when_salto_fails(settings, known_face_result: FaceMatchResult) -> None:
+def test_access_attempt_denies_when_door_placeholder_fails(
+    settings, known_face_result: FaceMatchResult
+) -> None:
     booking_client = MockBookingClient(booked_today={"U123"})
-    salto_client = MockSaltoClient(fail_unlock=True)
     app = create_app(
         settings,
         context_factory=lambda current: build_context(
             current,
             known_face_result,
             booking_client=booking_client,
-            salto_client=salto_client,
+            door_action=FailingDoorAction(),
         ),
     )
 
@@ -126,4 +181,95 @@ def test_access_attempt_denies_when_salto_fails(settings, known_face_result: Fac
         client.post("/api/admin/simulate/attempt")
         events = client.get("/api/admin/events").json()
 
-    assert events[0]["reason_code"] == "DENY_SALTO_ERROR"
+    assert events[0]["reason_code"] == "DENY_DOOR_ACTION_ERROR"
+    assert events[0]["decision"] == Decision.DENY.value
+    assert "opening" not in str(events[0]["metadata"]).lower()
+    assert app.state.context.state_machine.state.value == "LISTENING_LOW_POWER"
+
+
+def test_access_attempt_denies_when_door_placeholder_detail_is_none(
+    settings, known_face_result: FaceMatchResult
+) -> None:
+    app = create_app(
+        settings,
+        context_factory=lambda current: build_context(
+            current,
+            known_face_result,
+            booking_client=MockBookingClient(booked_today={"U123"}),
+            door_action=NullDetailDoorAction(),
+        ),
+    )
+
+    with TestClient(app) as client:
+        client.post("/api/admin/simulate/attempt")
+        event = client.get("/api/admin/events").json()[0]
+
+    assert event["decision"] == Decision.DENY.value
+    assert event["reason_code"] == "DENY_DOOR_ACTION_ERROR"
+    assert "opening" not in str(event["metadata"]).lower()
+
+
+def test_access_attempt_denies_when_door_placeholder_throws(
+    settings, known_face_result: FaceMatchResult
+) -> None:
+    app = create_app(
+        settings,
+        context_factory=lambda current: build_context(
+            current,
+            known_face_result,
+            booking_client=MockBookingClient(booked_today={"U123"}),
+            door_action=RaisingDoorAction(),
+        ),
+    )
+
+    with TestClient(app) as client:
+        client.post("/api/admin/simulate/attempt")
+        event = client.get("/api/admin/events").json()[0]
+
+    assert event["decision"] == Decision.ERROR.value
+    assert event["reason_code"] == "ERROR_INTERNAL"
+    assert "opening" not in str(event["metadata"]).lower()
+
+
+@pytest.mark.parametrize(
+    ("member_state", "expected_reason"),
+    [
+        ({"active": False}, "DENY_USER_INACTIVE"),
+        ({"biometric_consent": False}, "DENY_CONSENT_REQUIRED"),
+        ({"access_revoked": True}, "DENY_ACCESS_REVOKED"),
+    ],
+)
+def test_access_attempt_denies_ineligible_member(
+    settings,
+    known_face_result: FaceMatchResult,
+    member_state: dict,
+    expected_reason: str,
+) -> None:
+    app = create_app(
+        settings,
+        context_factory=lambda current: build_context(
+            current,
+            known_face_result,
+            booking_client=MockBookingClient(booked_today={"U123"}),
+            **member_state,
+        ),
+    )
+
+    with TestClient(app) as client:
+        client.post("/api/admin/simulate/attempt")
+        event = client.get("/api/admin/events").json()[0]
+
+    assert event["decision"] == Decision.DENY.value
+    assert event["reason_code"] == expected_reason
+
+
+def test_production_does_not_register_developer_routes(settings) -> None:
+    production = settings.model_copy(update={"app_env": RuntimeMode.PRODUCTION, "allow_dev_endpoints": True})
+    app = create_app(production)
+    paths = set(app.openapi()["paths"])
+
+    assert "/healthz/live" in paths
+    assert "/api/admin/events" not in paths
+    assert "/api/admin/enroll" not in paths
+    assert "/camera/snapshot" not in paths
+    assert "/ws/telemetry" not in paths

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import queue
-from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from app.config import Settings
@@ -38,7 +37,7 @@ class SoundDeviceMicrophoneAdapter:
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self._queue: queue.Queue[bytes] = queue.Queue()
+        self._queue: queue.Queue[bytes] = queue.Queue(maxsize=32)
         self._stream = None
         self.chunk_frames = int(settings.sample_rate_hz * (settings.wakeword_chunk_ms / 1000.0))
 
@@ -48,7 +47,15 @@ class SoundDeviceMicrophoneAdapter:
         def callback(indata, frames, _time, status) -> None:  # type: ignore[no-untyped-def]
             if status:
                 return
-            self._queue.put(bytes(indata))
+            if self._queue.full():
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    pass
+            try:
+                self._queue.put_nowait(bytes(indata))
+            except queue.Full:
+                pass
 
         self._stream = sd.RawInputStream(
             samplerate=self.settings.sample_rate_hz,
@@ -67,4 +74,9 @@ class SoundDeviceMicrophoneAdapter:
             self._stream = None
 
     async def read_chunk(self) -> bytes:
-        return await asyncio.to_thread(self._queue.get)
+        try:
+            return await asyncio.to_thread(self._queue.get, True, 2.0)
+        except queue.Empty as exc:
+            from app.services.reachy.media import AudioStalled
+
+            raise AudioStalled("Laptop microphone produced no samples") from exc

@@ -15,8 +15,9 @@ async function fetchJson(url, options = {}) {
 }
 
 async function refreshHealth() {
-  const payload = await fetchJson("/healthz/ready");
-  healthSummary.textContent = payload.ready ? "Ready" : "Not ready";
+  const response = await fetch("/healthz/ready");
+  const payload = await response.json();
+  healthSummary.textContent = `Conversation: ${payload.conversation_ready ? "ready" : "not ready"} · Access: ${payload.access_ready ? "ready" : "shadow only"}`;
   healthTableBody.innerHTML = "";
   Object.entries(payload.components).forEach(([component, status]) => {
     const row = document.createElement("tr");
@@ -111,9 +112,39 @@ document.querySelector("#simulate-attempt").addEventListener("click", async () =
   await refreshEvents();
 });
 
+document.querySelector("#start-voice-test").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const status = document.querySelector("#voice-test-status");
+  button.disabled = true;
+  status.textContent = "Connecting to Roo…";
+  try {
+    const result = await fetchJson("/api/admin/test-conversation", { method: "POST" });
+    status.textContent = result.running
+      ? "Roo is listening. Speak normally; you can interrupt it."
+      : "Realtime did not start.";
+  } catch (error) {
+    status.textContent = `Voice test failed: ${String(error)}`;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+fetchJson("/api/admin/biometric-notice").then((notice) => {
+  document.querySelector("#biometric-notice").textContent = notice.notice_text;
+  const form = document.querySelector("#enrollment-form");
+  form.notice_version.value = notice.notice_version;
+  form.notice_sha256.value = notice.notice_sha256;
+  document.querySelector("#enroll-submit").disabled = false;
+}).catch(() => {
+  document.querySelector("#biometric-notice").textContent = "The face-check notice is unavailable. Please use staff check-in.";
+});
+
 document.querySelector("#enrollment-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
+  const notice = await fetchJson("/api/admin/biometric-notice");
+  form.notice_version.value = notice.notice_version;
+  form.notice_sha256.value = notice.notice_sha256;
   const files = document.querySelector("#enrollment-files").files;
   const samples = await Promise.all(
     Array.from(files).map(async (file, index) => ({
@@ -127,6 +158,11 @@ document.querySelector("#enrollment-form").addEventListener("submit", async (eve
     slack_user_id: form.slack_user_id.value,
     slack_display_name: form.slack_display_name.value,
     company: form.company.value,
+    biometric_consent: form.biometric_consent.checked,
+    greet_by_name: form.greet_by_name.checked,
+    operator_id: form.operator_id.value,
+    notice_version: form.notice_version.value,
+    notice_sha256: form.notice_sha256.value,
     samples,
   };
 
