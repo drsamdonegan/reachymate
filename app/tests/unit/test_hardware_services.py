@@ -30,6 +30,28 @@ def test_heartbeat_is_measured_and_reading_does_not_renew():
     assert not beat.healthy(now=1)
 
 
+def test_usb_rediscovery_does_not_reuse_a_different_devices_index(settings, monkeypatch):
+    import sys
+
+    from app.services.reachy.media import ReachyMediaAdapter
+    from app.services.system.telemetry import TelemetryBroker
+
+    media = ReachyMediaAdapter(settings=settings, telemetry=TelemetryBroker())
+    media._direct_input_device = media._direct_output_device = 0
+    monkeypatch.setitem(
+        sys.modules,
+        "sounddevice",
+        SimpleNamespace(
+            query_devices=lambda: [
+                {"name": "Built-in Microphone", "max_input_channels": 2, "max_output_channels": 2}
+            ]
+        ),
+    )
+    with pytest.raises(RuntimeError, match="USB audio"):
+        media._open_direct_devices()
+    assert media._direct_input_device is None and media._direct_output_device is None
+
+
 @pytest.mark.asyncio
 async def test_supervision_recovers_an_exception_and_records_restart():
     ready = asyncio.Event()

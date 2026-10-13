@@ -95,6 +95,18 @@ async def test_robot_shutdown_runs_if_other_cleanup_fails(settings):
 
 
 @pytest.mark.asyncio
+async def test_developer_simulation_cannot_bypass_consent_on_real_hardware(settings):
+    context = AppContext(settings=settings, booking_client=MockBookingClient())
+    context.settings.reachy_simulation = False
+    try:
+        with pytest.raises(RuntimeError, match="local consent"):
+            await context.simulate_attempt()
+        assert not context.recent_events()
+    finally:
+        await context.stop()
+
+
+@pytest.mark.asyncio
 async def test_frontdesk_http_round_trip_and_no_guest_biometrics(settings):
     client = FrontdeskHttpClient(settings, transport=httpx.ASGITransport(app=create_mock(reply_delay=0)))
     router = VisitorRouter(client)

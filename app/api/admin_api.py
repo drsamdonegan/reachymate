@@ -110,7 +110,10 @@ async def test_conversation(request: Request) -> dict[str, Any]:
 
 @router.post("/simulate/attempt")
 async def simulate_attempt(request: Request) -> dict[str, str]:
-    await get_ctx(request).simulate_attempt()
+    try:
+        await get_ctx(request).simulate_attempt()
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
     return {"status": "started"}
 
 

@@ -766,6 +766,8 @@ class AppContext:
                 self.reachy_media.release_idle_camera()
 
     async def simulate_attempt(self) -> None:
+        if not self.settings.reachy_simulation or isinstance(self.robot, ReachyRobotAdapter):
+            raise RuntimeError("Simulation attempts are unavailable on real hardware; use local consent")
         await self.state_machine.handle_wake_word()
 
     def _build_microphone(self):
@@ -1090,7 +1092,7 @@ class AppContext:
         if self.reachy_media:
             self.reachy_media.release_idle_camera()
         park = getattr(self.robot, "park", None)
-        if park:
+        if park and reason != "robot_app_lock_busy":
             try:
                 await asyncio.wait_for(park(), 15)
             except Exception:

@@ -406,6 +406,10 @@ class ReachyMediaAdapter:
     def _open_direct_devices(self) -> None:
         import sounddevice as sd
 
+        # CoreAudio reuses indices after USB removal; an old index must never
+        # silently select the Mac's microphone or a different output device.
+        self._direct_input_device = None
+        self._direct_output_device = None
         devices = sd.query_devices()
         for index, device in enumerate(devices):
             name = str(device.get("name", "")).lower()
