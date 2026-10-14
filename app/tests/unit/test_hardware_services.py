@@ -190,6 +190,39 @@ async def test_power_call_order_and_sag_disable_finally():
     assert calls[-1] == "disabled_after_error"
 
 
+@pytest.mark.parametrize(
+    "limit,sag,translation,expected_error",
+    [
+        (0.10, 0.15, 0, "sleep_joint_sag_exceeded"),
+        (0.18, 0.15, 0, None),
+        (0.18, 0.19, 0, "sleep_joint_sag_exceeded"),
+        (0.18, 0.15, 0.20, "sleep_pose_tolerance_exceeded"),
+    ],
+)
+def test_bench_sag_allowance_preserves_normal_limit_and_head_pose_check(
+    limit, sag, translation, expected_error
+):
+    pytest.importorskip("reachy_mini")
+    from reachy_mini.reachy_mini import SLEEP_HEAD_POSE
+
+    pose = SLEEP_HEAD_POSE.copy()
+    pose[0, 3] += translation
+    states = iter(
+        [
+            {"head_joints": [0.0] * 7},
+            {"head_joints": [sag] * 7, "head_pose": {"m": pose.reshape(-1).tolist()}},
+        ]
+    )
+    daemon = SimpleNamespace(state=lambda: next(states), motors=lambda: {"mode": "disabled"})
+    mini = SimpleNamespace(enable_motors=lambda: None, goto_sleep=lambda: None, disable_motors=lambda: None)
+    power = RobotPowerManager(MotionManager(mini), daemon, sag_delay=0, joint_sag_limit=limit)
+    if expected_error:
+        with pytest.raises(RuntimeError, match=expected_error):
+            power._park()
+    else:
+        power._park()
+
+
 def test_stereo_corpus_channel_selection_is_explicit(tmp_path):
     import wave
 

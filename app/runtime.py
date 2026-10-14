@@ -260,6 +260,7 @@ class AppContext:
         self._routing_task = None
         self._idle_task = None
         self._safe_hold_task = None
+        self._hardware_fault_lock = asyncio.Lock()
         self._track_ref = str(uuid4())
 
         self.detector = YuNetFaceDetector(
@@ -752,6 +753,14 @@ class AppContext:
             "degraded_reason": self.attention.degraded_reason,
             "face_present": observation is not None and observation.in_zone,
         }
+        power = getattr(self.robot, "power", None)
+        if power:
+            diagnostics["power"] = {
+                "parked": power.parked,
+                "parking": power.parking,
+                "joint_sag_limit_radians": power.joint_sag_limit,
+                "bench_tolerance": self.settings.uncalibrated_conversation_demo,
+            }
         return diagnostics
 
     def telemetry_snapshot(self) -> list[dict[str, Any]]:
@@ -982,7 +991,12 @@ class AppContext:
                 "daemon",
                 HealthStatus.HEALTHY if self.daemon_supervisor.heartbeat.healthy() else HealthStatus.ERROR,
             )
-        if isinstance(self.robot, ReachyRobotAdapter) and self.robot.motion and self.robot.motion.error:
+        if (
+            isinstance(self.robot, ReachyRobotAdapter)
+            and self.robot.motion
+            and self.robot.motion.error
+            and not getattr(self.robot.power, "parking", False)
+        ):
             await self._hardware_fault("motion_fault")
         if self.attention.enabled:
             camera_ok = self.attention.heartbeat.healthy()
@@ -1033,11 +1047,15 @@ class AppContext:
 
     async def _prepare_engagement(self) -> None:
         if self._idle_task:
-            self._idle_task.cancel()
+            if getattr(getattr(self.robot, "power", None), "parking", False):
+                await asyncio.shield(self._idle_task)
+            else:
+                self._idle_task.cancel()
         self._track_ref = str(uuid4())
         wake = getattr(self.robot, "wake", None)
         if wake:
             await wake(self.doa.wake_bearing() if self.doa else 0.0)
+        await self.state_machine.transition(AppState.ENGAGED)
         if self.reachy_media:
             frame = await asyncio.to_thread(self.camera.get_frame)
             self.system_health.set_status(
@@ -1077,19 +1095,33 @@ class AppContext:
         if getattr(self, "_stopping", False):
             return
         await self.state_machine.transition(AppState.IDLE)
-        if self._idle_task:
+        if self._idle_task and self._idle_task is not asyncio.current_task():
             self._idle_task.cancel()
         self._idle_task = asyncio.create_task(self._park_after_idle())
 
     async def _park_after_idle(self, delay=60) -> None:
         await asyncio.sleep(delay)
-        if not self.guard.is_engaged() and not self.access_disabled:
+        if (
+            self.state_machine.state == AppState.IDLE
+            and not self.guard.is_engaged()
+            and not self.access_disabled
+        ):
             park = getattr(self.robot, "park", None)
             if park:
-                await park()
+                try:
+                    await park()
+                except Exception:
+                    await self._hardware_fault("park_failed")
+                    return
             await self.state_machine.transition(AppState.DORMANT)
 
     async def _hardware_fault(self, reason: str) -> None:
+        async with self._hardware_fault_lock:
+            if self.state_machine.state == AppState.SAFE_HOLD:
+                return
+            await self._enter_safe_hold(reason)
+
+    async def _enter_safe_hold(self, reason: str) -> None:
         if getattr(self, "_stopping", False):
             return
         self.telemetry.publish("hardware_fault", {"reason": reason})

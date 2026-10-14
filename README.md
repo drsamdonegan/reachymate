@@ -30,7 +30,7 @@ Admin routes are disabled unless `ALLOW_DEV_ENDPOINTS=true` and are never regist
 .venv/bin/python -m app.scripts.run_reachy_live_test --demo
 ```
 
-The demo profile uses loopback front-desk/bookings mocks and forces shadow mode. It does not grant consent or approve any hardware deployment. Camera calibration and direction surveys must be completed before live conversation acceptance.
+The demo profile uses loopback front-desk/bookings mocks and forces shadow mode. Without measured camera calibration it uses SDK intrinsics for detection-only conversation, reports degraded attention, and disables face-directed motion. Its bench-only joint-settling allowance is 0.18 rad; normal profiles retain 0.10 rad, and every profile still verifies torque off and the sleep head pose. This demo does not grant biometric consent or approve hardware deployment. Complete camera calibration and direction surveys before live conversation acceptance.
 
 ## Verification
 

@@ -123,7 +123,11 @@ class ReachyRobotAdapter(SimulatedRobotAdapter):
         self.daemon = DaemonClient(self.settings.reachy_host, self.settings.reachy_port)
         self.motion = MotionManager(self._reachy)
         self.motion.start()
-        self.power = RobotPowerManager(self.motion, self.daemon)
+        self.power = RobotPowerManager(
+            self.motion,
+            self.daemon,
+            joint_sag_limit=0.18 if self.settings.uncalibrated_conversation_demo else 0.10,
+        )
         path = getattr(self.settings, "camera_calibration_path", None)
         if path:
             self.calibration = CameraCalibration.load(path)

@@ -16,12 +16,24 @@ logger = logging.getLogger(__name__)
 
 
 class RobotPowerManager:
-    def __init__(self, motion, daemon, *, sag_delay: float = 5.0) -> None:
+    def __init__(self, motion, daemon, *, sag_delay: float = 5.0, joint_sag_limit: float = 0.10) -> None:
         self.motion, self.daemon, self.sag_delay = motion, daemon, sag_delay
+        self.joint_sag_limit = joint_sag_limit
+        self.parking = False
+        self._transition_lock = asyncio.Lock()
         self.parked = False
         self.error: str | None = None
 
     async def park(self) -> None:
+        async with self._transition_lock:
+            self.parking = True
+            try:
+                await self._park_attempts()
+            finally:
+                self.parking = False
+
+    async def _park_attempts(self) -> None:
+        self.parked = False
         self.motion.set_mode(MotionMode.PARKED)
         # A daemon-side stop is the backstop if an SDK goto stops completing.
         for attempt in range(2):
@@ -62,8 +74,12 @@ class RobotPowerManager:
         if expected is None or actual is None or len(expected) != len(actual) or not actual:
             raise RuntimeError("sleep_joint_verification_unavailable")
         sag = float(np.max(np.abs(np.asarray(expected) - np.asarray(actual))))
-        logger.info("Sleep verification: torque disabled, maximum joint sag %.4f radians", sag)
-        if sag > 0.10:
+        logger.info(
+            "Sleep verification: torque disabled, maximum joint sag %.4f radians (limit %.4f)",
+            sag,
+            self.joint_sag_limit,
+        )
+        if sag > self.joint_sag_limit:
             raise RuntimeError("sleep_joint_sag_exceeded")
         from reachy_mini.reachy_mini import SLEEP_HEAD_POSE
 
@@ -83,9 +99,10 @@ class RobotPowerManager:
             raise RuntimeError("sleep_pose_tolerance_exceeded")
 
     async def wake(self, bearing_radians: float = 0.0) -> None:
-        await asyncio.wait_for(self.motion.execute(self._wake, bearing_radians), timeout=5)
-        self.parked = False
-        self.motion.set_mode(MotionMode.ENGAGED)
+        async with self._transition_lock:
+            await asyncio.wait_for(self.motion.execute(self._wake, bearing_radians), timeout=5)
+            self.parked = False
+            self.motion.set_mode(MotionMode.ENGAGED)
 
     def _wake(self, bearing: float) -> None:
         from reachy_mini.reachy_mini import INIT_HEAD_POSE
