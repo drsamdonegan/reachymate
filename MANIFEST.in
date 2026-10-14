@@ -1,0 +1,5 @@
+prune tests
+prune app/tests
+include NOTICE
+include THIRD_PARTY_NOTICES.md
+include model-assets.json

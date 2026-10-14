@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
-
+from fastapi.responses import JSONResponse
 
 router = APIRouter()
 
@@ -18,5 +18,6 @@ async def live(request: Request) -> dict:
 
 
 @router.get("/healthz/ready")
-async def ready(request: Request) -> dict:
-    return get_ctx(request).readiness()
+async def ready(request: Request) -> JSONResponse:
+    payload = get_ctx(request).readiness()
+    return JSONResponse(payload, status_code=200 if payload["ready"] else 503)

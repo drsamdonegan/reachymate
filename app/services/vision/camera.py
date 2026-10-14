@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
+import platform
 from typing import Any, Protocol
 
 import numpy as np
@@ -11,7 +13,6 @@ from PIL import Image, ImageDraw
 
 from app.config import Settings
 from app.services.system.telemetry import TelemetryBroker
-
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ class SimulationCameraAdapter:
         draw = ImageDraw.Draw(image)
         draw.rounded_rectangle((165, 95, 475, 385), radius=20, outline="#8de1ff", width=4)
         draw.text((195, 205), "Simulation Camera", fill="#e9fbff")
-        return np.array(image)
+        return np.array(image)[:, :, ::-1].copy()
 
 
 class ReachyCameraAdapter(SimulationCameraAdapter):
@@ -77,28 +78,74 @@ class ReachyCameraAdapter(SimulationCameraAdapter):
         *,
         settings: Settings,
         telemetry: TelemetryBroker,
-        robot_provider,
+        media,
     ) -> None:
         super().__init__(settings=settings, telemetry=telemetry)
-        self.robot_provider = robot_provider
+        self.media = media
+
+    async def start(self) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
 
     def get_frame(self) -> np.ndarray | None:
-        robot = self.robot_provider()
-        if robot is not None:
-            try:
-                frame = robot.media.get_frame()
-                if frame is not None:
-                    self._frame = frame
-            except Exception:
-                logger.debug("Reachy frame fetch failed", exc_info=True)
-        return super().get_frame()
+        try:
+            frame = self.media.get_frame()
+        except Exception:
+            logger.debug("Reachy frame fetch failed", exc_info=True)
+            return None
+        return None if frame is None else frame.copy()
+
+
+class PinnedLocalCameraAdapter:
+    """Camera-only enrollment capture, with no SDK or motor connection."""
+
+    def __init__(self, *, settings: Settings, telemetry: TelemetryBroker):
+        self.settings, self.telemetry = settings, telemetry
+        self._capture = None
+
+    async def start(self):
+        import cv2
+
+        if platform.system() == "Darwin":
+            from app.services.system.tcc import resolve_camera
+
+            index = resolve_camera(
+                name=self.settings.reachy_camera_name, unique_id=self.settings.reachy_camera_unique_id
+            )
+        else:
+            raise RuntimeError("Camera-only identity pinning currently requires AVFoundation on macOS")
+        capture = await asyncio.to_thread(cv2.VideoCapture, index)
+        if not capture.isOpened():
+            capture.release()
+            raise RuntimeError("Reachy camera is unavailable; check Camera permission")
+        capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        self._capture = capture
+
+    async def stop(self):
+        if self._capture is not None:
+            await asyncio.to_thread(self._capture.release)
+            self._capture = None
+
+    def get_frame(self):
+        if self._capture is None:
+            raise RuntimeError("Enrollment camera has not been started")
+        ok, frame = self._capture.read()
+        return frame if ok else None
+
+    def get_snapshot_bytes(self):
+        frame = self.get_frame()
+        return None if frame is None else encode_frame_as_jpeg(frame)
 
 
 def encode_frame_as_jpeg(frame: np.ndarray) -> bytes:
     """Encode a numpy frame to JPEG bytes without requiring OpenCV."""
 
     if frame.ndim == 3 and frame.shape[2] == 3:
-        image = Image.fromarray(frame.astype("uint8"))
+        image = Image.fromarray(frame[:, :, ::-1].astype("uint8"))
     else:
         image = Image.fromarray(frame.astype("uint8"), mode="L")
     buffer = io.BytesIO()

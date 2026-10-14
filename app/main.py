@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Callable
 
 import uvicorn
@@ -40,31 +38,32 @@ def create_app(
             await context.stop()
 
     app = FastAPI(title="Reachy Office Bouncer", lifespan=lifespan)
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
     app.include_router(health.router)
-    app.include_router(admin_api.router)
+    if settings.dev_endpoints_enabled:
+        app.mount("/static", StaticFiles(directory=static_dir), name="static")
+        app.include_router(admin_api.router)
 
-    @app.get("/")
-    async def index() -> FileResponse:
-        return FileResponse(static_dir / "index.html")
+        @app.get("/")
+        async def index() -> FileResponse:
+            return FileResponse(static_dir / "index.html")
 
-    @app.get("/camera/snapshot")
-    async def camera_snapshot(request: Request) -> Response:
-        content = request.app.state.context.get_camera_snapshot()
-        if content is None:
-            return Response(status_code=503)
-        return Response(content=content, media_type="image/jpeg")
+        @app.get("/camera/snapshot")
+        async def camera_snapshot(request: Request) -> Response:
+            content = request.app.state.context.get_camera_snapshot()
+            if content is None:
+                return Response(status_code=503)
+            return Response(content=content, media_type="image/jpeg")
 
-    @app.websocket("/ws/telemetry")
-    async def telemetry_socket(websocket: WebSocket) -> None:
-        await websocket.accept()
-        queue = await websocket.app.state.context.telemetry.subscribe()
-        try:
-            while True:
-                event = await queue.get()
-                await websocket.send_json(event)
-        except WebSocketDisconnect:
-            websocket.app.state.context.telemetry.unsubscribe(queue)
+        @app.websocket("/ws/telemetry")
+        async def telemetry_socket(websocket: WebSocket) -> None:
+            await websocket.accept()
+            queue = await websocket.app.state.context.telemetry.subscribe()
+            try:
+                while True:
+                    event = await queue.get()
+                    await websocket.send_json(event)
+            except WebSocketDisconnect:
+                websocket.app.state.context.telemetry.unsubscribe(queue)
 
     return app
 
@@ -76,4 +75,3 @@ def main() -> None:
 
 
 app = create_app()
-

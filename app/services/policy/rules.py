@@ -23,6 +23,10 @@ def face_reason(face_match: FaceMatchResult, face_match_threshold: float) -> Rea
         return ReasonCode.DENY_FACE_TOO_SMALL
     if not face_match.quality.usable:
         return ReasonCode.DENY_LOW_FACE_QUALITY
+    if getattr(face_match, "match_status", None) == "UNKNOWN":
+        return ReasonCode.DENY_UNKNOWN_FACE
+    if getattr(face_match, "match_status", None) == "UNCERTAIN":
+        return ReasonCode.DENY_LOW_MATCH_CONFIDENCE
     if face_match.matched_user_id is None and face_match.similarity is None:
         return ReasonCode.DENY_UNKNOWN_FACE
     if face_match.matched_user_id is None:

@@ -12,6 +12,12 @@ env/
 
 # Environment variables
 .env
+.codex-runtime-logs/
+data/face_db/
+data/voices/
+data/eval/
+data/audio-corpus/
+data/heartbeat.*
 
 # Build and distribution
 build/
@@ -50,6 +56,8 @@ cache/
 data/*.db
 data/*.sqlite
 data/*.sqlite3
+data/*.db-*
+data/models/
 
 # macOS
 .DS_Store

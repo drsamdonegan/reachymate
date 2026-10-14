@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 revision = "0001_initial"
 down_revision = None
@@ -28,7 +27,9 @@ def upgrade() -> None:
     op.create_table(
         "face_embeddings",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("user_id", sa.String(length=36), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "user_id", sa.String(length=36), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("embedding_vector", sa.JSON(), nullable=False),
         sa.Column("quality_score", sa.Float(), nullable=False),
         sa.Column("sample_label", sa.String(length=64), nullable=True),

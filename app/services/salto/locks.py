@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import ClassVar, Protocol
 
 import httpx
 
@@ -11,38 +11,63 @@ from app.models.domain import UnlockResult
 
 
 class SaltoClient(Protocol):
+    is_physical: bool
+
     async def unlock(self, *, access_token: str, site_id: str, lock_id: str) -> UnlockResult: ...
 
 
 class HttpSaltoClient:
-    """Minimal SALTO API client."""
+    """Typed subset of the current SALTO KS Connect locking contract."""
+
+    is_physical: ClassVar[bool] = True
 
     def __init__(self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.settings = settings
-        self.client = httpx.AsyncClient(base_url=settings.salto_api_base_url.rstrip("/"), timeout=10.0, transport=transport)
+        self.client = httpx.AsyncClient(
+            base_url=settings.salto_api_base_url.rstrip("/"), timeout=10.0, transport=transport
+        )
 
     async def close(self) -> None:
         await self.client.aclose()
 
     async def unlock(self, *, access_token: str, site_id: str, lock_id: str) -> UnlockResult:
-        response = await self.client.post(
-            f"/sites/{site_id}/locks/{lock_id}/unlock",
+        response = await self.client.patch(
+            f"/v1.2/sites/{site_id}/locks/{lock_id}/locking",
             headers={"Authorization": f"Bearer {access_token}"},
-            json={"reason": "reachy-office-bouncer"},
+            json={"locked_state": "unlocked"},
         )
         if response.status_code >= 400:
-            return UnlockResult(success=False, detail=f"unlock_failed:{response.status_code}", metadata={"body": response.text})
-        payload = response.json() if response.content else {}
+            return UnlockResult(
+                success=False,
+                detail=f"unlock_failed:{response.status_code}",
+                metadata={"http_status": response.status_code},
+            )
+        try:
+            payload = response.json() if response.content else {}
+        except ValueError:
+            return UnlockResult(
+                success=False,
+                detail="unlock_response_malformed",
+                metadata={"http_status": response.status_code},
+            )
+        if not isinstance(payload, dict):
+            return UnlockResult(success=False, detail="unlock_response_malformed")
+        request_id = response.headers.get("x-request-id") or payload.get("request_id")
         return UnlockResult(
-            success=True,
-            detail="unlocked",
-            provider_request_id=str(payload.get("request_id", "")) or None,
-            metadata=payload,
+            # SALTO's HTTP response accepts the remote-locking action; it does
+            # not prove the door physically opened. A future door-sensor
+            # reconciler must provide that confirmation before ALLOW.
+            success=False,
+            detail="unlock_command_accepted_unconfirmed",
+            provider_request_id=str(request_id) if request_id else None,
+            metadata={"http_status": response.status_code, "opening_confirmed": False},
         )
 
 
 class MockSaltoClient:
     """Mock SALTO client."""
+
+    is_physical: ClassVar[bool] = False
 
     def __init__(self, *, fail_auth: bool = False, fail_unlock: bool = False) -> None:
         self.fail_auth = fail_auth
@@ -55,4 +80,18 @@ class MockSaltoClient:
             return UnlockResult(success=False, detail="unauthorized")
         if self.fail_unlock:
             return UnlockResult(success=False, detail="lock_offline")
-        return UnlockResult(success=True, detail="unlocked", provider_request_id="mock-request")
+        return UnlockResult(
+            success=True,
+            detail="simulated",
+            provider_request_id="mock-request",
+            metadata={"simulated": True},
+        )
+
+
+class DisabledSaltoClient:
+    """Non-actuating client used when physical door control is frozen."""
+
+    is_physical: ClassVar[bool] = False
+
+    async def unlock(self, *, access_token: str, site_id: str, lock_id: str) -> UnlockResult:
+        return UnlockResult(success=False, detail="physical_unlock_disabled")

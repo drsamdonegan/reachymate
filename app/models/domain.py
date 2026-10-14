@@ -8,7 +8,6 @@ from typing import Any
 
 from .enums import AppState, BookingStatus, Decision, FaceQualityFlag, HealthStatus, ReasonCode
 
-
 BoundingBox = tuple[int, int, int, int]
 
 
@@ -30,6 +29,9 @@ class FaceMatchResult:
     bbox: BoundingBox | None = None
     stable_frames: int = 0
     embedding: list[float] | None = None
+    match_status: str | None = None
+    margin: float | None = None
+    score_band: str | None = None
 
 
 @dataclass(slots=True)
@@ -48,7 +50,7 @@ class SystemStatusSnapshot:
     components: dict[str, HealthStatus] = field(default_factory=dict)
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class PolicyDecision:
     decision: Decision
     reason_code: ReasonCode

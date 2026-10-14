@@ -3,6 +3,13 @@ from __future__ import annotations
 from app.models.domain import BookingResult, FaceMatchResult, FaceQuality, SystemStatusSnapshot
 from app.models.enums import BookingStatus, Decision, FaceQualityFlag, HealthStatus, ReasonCode
 from app.services.policy.decision_engine import DecisionEngine
+from app.services.system.health import ACCESS_REQUIRED_COMPONENTS
+
+
+def healthy_status() -> SystemStatusSnapshot:
+    return SystemStatusSnapshot(
+        ready=True, components={component: HealthStatus.HEALTHY for component in ACCESS_REQUIRED_COMPONENTS}
+    )
 
 
 def test_decision_engine_allows_known_face_with_active_booking(known_face_result: FaceMatchResult) -> None:
@@ -11,7 +18,7 @@ def test_decision_engine_allows_known_face_with_active_booking(known_face_result
     decision = engine.evaluate(
         face_match_result=known_face_result,
         booking_result=BookingResult(status=BookingStatus.ACTIVE, active=True),
-        system_status=SystemStatusSnapshot(ready=True, components={"database": HealthStatus.HEALTHY}),
+        system_status=healthy_status(),
     )
 
     assert decision.allowed is True
@@ -37,7 +44,7 @@ def test_decision_engine_denies_multiple_faces() -> None:
     decision = engine.evaluate(
         face_match_result=face_result,
         booking_result=BookingResult(status=BookingStatus.NONE, active=False),
-        system_status=SystemStatusSnapshot(ready=True),
+        system_status=healthy_status(),
     )
 
     assert decision.allowed is False
@@ -50,7 +57,7 @@ def test_decision_engine_denies_when_booking_lookup_fails(known_face_result: Fac
     decision = engine.evaluate(
         face_match_result=known_face_result,
         booking_result=BookingResult(status=BookingStatus.LOOKUP_FAILED, active=False),
-        system_status=SystemStatusSnapshot(ready=True),
+        system_status=healthy_status(),
     )
 
     assert decision.allowed is False
@@ -68,4 +75,4 @@ def test_decision_engine_fails_closed_on_system_health(known_face_result: FaceMa
 
     assert decision.allowed is False
     assert decision.decision == Decision.ERROR
-    assert decision.reason_code == ReasonCode.ERROR_INTERNAL
+    assert decision.reason_code == ReasonCode.ERROR_ACCESS_NOT_READY
