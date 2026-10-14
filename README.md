@@ -42,4 +42,6 @@ uv build
 
 Hardware measurements are separate from unit tests. See [hardware probes](docs/hardware-probes.md), [speaker focus validation](docs/speaker-focus-validation.md), [front-desk contract](docs/contracts/frontdesk-skill.md) and [concierge overview](docs/concierge.md). Optional pilot features remain disabled until their assets and held-out measurements are validated.
 
+Follow the [functionality test guide](docs/testing.md) for the attended bench checklist, automated scenarios, failure drills and remaining physical acceptance gates.
+
 The legacy conversation prototype is retained until physical migration acceptance; it is excluded from the canonical package and test command.
