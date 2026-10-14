@@ -369,6 +369,12 @@ class ReachyMediaAdapter:
             # explicit direct backend where the callback cursor is measured.
             return self._output_frames_accepted
 
+    def output_buffered_frames(self) -> int:
+        if self.settings.reachy_media_backend == "lite_direct":
+            with self._direct_output_lock:
+                return sum(len(chunk) for chunk in self._direct_output_queue)
+        return 0
+
     def output_active(self) -> bool:
         """Return whether non-silent audio was handed to Reachy's speaker recently."""
 

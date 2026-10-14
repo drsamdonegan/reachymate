@@ -23,7 +23,8 @@ async function refreshHealth() {
     const row = document.createElement("tr");
     const statusClass =
       status === "HEALTHY" ? "status-ok" : status === "DEGRADED" ? "status-warn" : "status-bad";
-    row.innerHTML = `<td>${component}</td><td class="${statusClass}">${status}</td>`;
+    const label = component === "realtime" ? "voice" : component;
+    row.innerHTML = `<td>${label}</td><td class="${statusClass}">${status}</td>`;
     healthTableBody.appendChild(row);
   });
 }
@@ -64,23 +65,29 @@ async function refreshCamera() {
 async function refreshVoice() {
   try {
     const diagnostics = await fetchJson("/api/admin/diagnostics/audio");
-    const realtime = diagnostics.realtime;
+    const realtime = diagnostics.voice || diagnostics.realtime;
     const status = document.querySelector("#voice-test-status");
+    const audioStatus = document.querySelector("#voice-audio-status");
+    audioStatus.textContent = realtime?.full_duplex
+      ? `Backend: ${realtime.backend_model} · Input frames: ${Number(realtime.input_frames_sent || 0).toLocaleString()} · Output frames: ${Number(realtime.output_frames_received || 0).toLocaleString()} · Speaking overlap: ${Number(realtime.simultaneous_input_output_frames || 0).toLocaleString()} frames`
+      : "";
     if (!realtime) {
-      status.textContent = "Realtime voice is disabled.";
+      status.textContent = "OpenAI voice is disabled.";
     } else if (realtime.last_error) {
-      status.textContent = `Realtime error: ${realtime.last_error}`;
+      status.textContent = `${realtime.api_label || "Voice"} error: ${realtime.last_error}`;
     } else if (!realtime.running) {
-      status.textContent = "Say “Hey Reachy” or start a voice test.";
+      status.textContent = `${realtime.api_label || "Voice"} · ${realtime.model} · Say “Hey Reachy” or start a voice test.`;
     } else {
       const focus = diagnostics.attention?.face_present
         ? "Face in view"
         : "Move into Reachy's camera view to speak";
       const mode = diagnostics.attention?.degraded_reason ? " · Uncalibrated bench demo" : "";
-      status.textContent = `${realtime.model} connected · ${focus}${mode}`;
+      const duplex = realtime.full_duplex ? " · Full duplex" : "";
+      status.textContent = `${realtime.api_label || "Realtime"} · ${realtime.model} connected${duplex} · ${focus}${mode}`;
     }
   } catch (error) {
     document.querySelector("#voice-test-status").textContent = "Voice service unavailable.";
+    document.querySelector("#voice-audio-status").textContent = "";
   }
 }
 
@@ -146,8 +153,8 @@ document.querySelector("#start-voice-test").addEventListener("click", async (eve
   try {
     const result = await fetchJson("/api/admin/test-conversation", { method: "POST" });
     status.textContent = result.running
-      ? "Roo is listening. Speak normally; you can interrupt it."
-      : "Realtime did not start.";
+      ? `${result.api_label || "Voice"} connected. Speak normally, including while Roo talks.`
+      : "Voice did not start.";
   } catch (error) {
     status.textContent = `Voice test failed: ${String(error)}`;
   } finally {

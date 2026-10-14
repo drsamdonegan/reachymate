@@ -28,6 +28,7 @@ from app.services.audio.xvf import XvfController
 from app.services.conversation import ConversationCoordinator
 from app.services.door import PlaceholderDoorAction
 from app.services.knowledge import PublicKnowledgeClient
+from app.services.live import OpenAIGptLiveSession
 from app.services.policy.decision_engine import DecisionEngine
 from app.services.reachy.daemon_supervisor import DaemonSupervisor
 from app.services.reachy.media import ReachyMediaAdapter
@@ -363,8 +364,9 @@ class AppContext:
         self.realtime = None
         if settings.realtime_enabled:
             if not isinstance(self.microphone, ReachyMediaAdapter):
-                raise RuntimeError("Realtime voice requires the shared Reachy media adapter")
-            self.realtime = OpenAIRealtimeSession(
+                raise RuntimeError("OpenAI voice requires the shared Reachy media adapter")
+            session_type = OpenAIGptLiveSession if settings.voice_api == "gpt_live" else OpenAIRealtimeSession
+            self.realtime = session_type(
                 settings=settings,
                 playback=self.microphone,
                 knowledge=self.public_knowledge,
@@ -429,7 +431,7 @@ class AppContext:
             on_track_changed=self.conversation.update_engaged_track,
             on_fault=self._hardware_fault,
             on_barge_in=self.realtime.cancel_response
-            if self.realtime and settings.local_barge_in_enabled
+            if self.realtime and settings.local_barge_in_enabled and settings.voice_api == "realtime"
             else None,
             barge_in_allowed=lambda: bool(
                 self.realtime and self.realtime.running and not self.realtime._input_suspended
@@ -727,10 +729,10 @@ class AppContext:
         await self.robot.speak(text)
 
     async def start_voice_test(self) -> dict[str, Any]:
-        """Open the same wake-scoped Realtime path from the loopback diagnostics UI."""
+        """Open the selected wake-scoped voice path from the loopback diagnostics UI."""
 
         if self.realtime is None:
-            raise RuntimeError("Realtime voice is not enabled")
+            raise RuntimeError("OpenAI voice is not enabled")
         await self.conversation.handle_wake()
         return self.realtime.diagnostics()
 
@@ -747,6 +749,7 @@ class AppContext:
             diagnostics["reachy_media"] = self.reachy_media.diagnostics()
         if self.realtime is not None:
             diagnostics["realtime"] = self.realtime.diagnostics()
+            diagnostics["voice"] = diagnostics["realtime"]
         observation = self.attention.latest()
         diagnostics["attention"] = {
             "enabled": self.attention.enabled,
@@ -845,18 +848,19 @@ class AppContext:
             )
         if not self.settings.reachy_enabled or self.settings.reachy_simulation:
             errors.append("production requires a real Reachy adapter")
-        if self.settings.tts_engine not in {"realtime", "fixed_clips"}:
-            errors.append("production speech requires Realtime or pinned fixed clips")
+        if self.settings.tts_engine not in {"live", "realtime", "fixed_clips"}:
+            errors.append("production speech requires GPT-Live, Realtime or pinned fixed clips")
         if not self.settings.realtime_enabled:
-            errors.append("production requires wake-scoped OpenAI Realtime voice")
+            errors.append("production requires wake-scoped OpenAI voice")
         if self.settings.openai_api_key is None:
             errors.append("production OpenAI credential is missing")
         if not self.settings.realtime_safety_identifier_key:
-            errors.append("production requires a keyed Realtime safety identifier")
+            errors.append("production requires a keyed voice safety identifier")
         if self.settings.data_encryption_key is None and not self.settings.kek_endpoint:
             errors.append("production sensitive-data encryption key is missing")
-        if self.settings.openai_realtime_model != "gpt-realtime-2.1":
-            errors.append("production must use the approved current Realtime model")
+        approved = "gpt-live-1" if self.settings.voice_api == "gpt_live" else "gpt-realtime-2.1"
+        if self.settings.voice_model != approved:
+            errors.append("production must use the approved model for the selected voice API")
         if not self.settings.mlai_public_knowledge_token:
             errors.append("production requires an organization-scoped public Roo service principal")
         if self.settings.wakeword_engine != "sherpa_onnx":

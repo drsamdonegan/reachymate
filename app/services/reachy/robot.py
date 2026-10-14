@@ -237,9 +237,9 @@ class ReachyRobotAdapter(SimulatedRobotAdapter):
             await process.wait()
             return
 
-        if self.settings.tts_engine == "realtime":
+        if self.settings.tts_engine in {"realtime", "live"}:
             if self._realtime_speech is None:
-                raise RuntimeError("Realtime speech is not connected to the robot adapter")
+                raise RuntimeError("OpenAI voice is not connected to the robot adapter")
             owner = getattr(self._realtime_speech, "__self__", None)
             if owner is not None and not getattr(owner, "running", False):
                 self.telemetry.publish("speech", {"event": "speech_skipped", "reason": "no_realtime_session"})

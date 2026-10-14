@@ -102,13 +102,13 @@ class ConversationCoordinator:
                     await asyncio.gather(*tasks)
                 if self.realtime is not None:
                     self.system_health.set_status(
-                        "realtime", HealthStatus.HEALTHY, {"model": self.settings.openai_realtime_model}
+                        "realtime", HealthStatus.HEALTHY, {"model": self.settings.voice_model}
                     )
                     await self.realtime.greet()
                 else:
                     self._local_only_until = time.monotonic() + 20
             except Exception as exc:
-                logger.warning("Realtime engagement failed: %s", type(exc).__name__)
+                logger.warning("OpenAI voice engagement failed: %s", type(exc).__name__)
                 self.system_health.set_status("realtime", HealthStatus.ERROR, {"error": type(exc).__name__})
                 self._local_only_until = time.monotonic() + 20
                 self.gated_activity()

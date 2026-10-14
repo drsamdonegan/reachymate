@@ -21,7 +21,9 @@ LIVE_TEST_DEFAULTS = {
     "REACHY_MEDIA_BACKEND": "lite_direct",
     "REACHY_CAMERA_DEVICE_INDEX": "1",
     "REALTIME_ENABLED": "true",
-    "TTS_ENGINE": "realtime",
+    "VOICE_API": "gpt_live",
+    "TTS_ENGINE": "live",
+    "OPENAI_LIVE_MODEL": "gpt-live-1",
     "OPENAI_REALTIME_MODEL": "gpt-realtime-2.1",
 }
 
@@ -99,12 +101,13 @@ def main() -> None:
 
     from app.main import create_app
 
-    print("Reachy live test: say 'Hey Reachy', then speak normally.")
+    api_label = "GPT-Live" if settings.voice_api == "gpt_live" else "Realtime"
+    print(f"Reachy {api_label} voice test ({settings.voice_model}): say 'Hey Reachy', then speak normally.")
     print(f"Local diagnostics: http://{settings.host}:{settings.port}")
     print("Door action: placeholder only; no hardware actuation is possible.")
     if settings.uncalibrated_conversation_demo and not settings.camera_calibration_path:
         print("Attention: vendor intrinsics for conversation only; field calibration remains pending.")
-    uvicorn.run(create_app(settings), host=settings.host, port=settings.port)
+    uvicorn.run(create_app(settings), host=settings.host, port=settings.port, timeout_graceful_shutdown=5)
 
 
 if __name__ == "__main__":

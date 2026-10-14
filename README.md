@@ -1,6 +1,6 @@
 # Reachy concierge
 
-FastAPI concierge for Reachy Mini Lite. The canonical runtime is `app/`. Local wake detection starts an engagement; a detection-only face tracker and an audio-visual gate select speech for a bounded OpenAI Realtime conversation. The model has seven typed tools and no identity or door actuator capability.
+FastAPI concierge for Reachy Mini Lite. The canonical runtime is `app/`. Local wake detection starts an engagement; a detection-only face tracker and an audio-visual gate select speech for a bounded GPT-Live conversation. `gpt-live-1` listens while speaking; its `gpt-6-luna` Responses backend has seven typed tools and no identity or door actuator capability.
 
 Face checks require a fixed local notice followed by the visitor's own locally recognised “check me in”. Enrollment requires recorded voluntary consent and encrypted templates. Routed visitors cannot start a face check during that engagement.
 
@@ -31,6 +31,8 @@ Admin routes are disabled unless `ALLOW_DEV_ENDPOINTS=true` and are never regist
 ```
 
 The demo profile uses loopback front-desk/bookings mocks and forces shadow mode. Without measured camera calibration it uses SDK intrinsics for detection-only conversation, reports degraded attention, and disables face-directed motion. Its bench-only joint-settling allowance is 0.18 rad; normal profiles retain 0.10 rad, and every profile still verifies torque off and the sleep head pose. This demo does not grant biometric consent or approve hardware deployment. Complete camera calibration and direction surveys before live conversation acceptance.
+
+The launcher selects `VOICE_API=gpt_live` and `TTS_ENGINE=live`. Cloud voice still uses the existing `REALTIME_ENABLED` enable switch and `REALTIME_SAFETY_IDENTIFIER_KEY` secret. The previous Realtime transport remains explicitly selectable with `VOICE_API=realtime`; connection failures do not switch APIs automatically. See [GPT-Live transport](docs/gpt-live.md) for configuration, lifecycle and diagnostics.
 
 ## Verification
 

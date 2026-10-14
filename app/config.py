@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -55,6 +56,12 @@ class Settings(BaseSettings):
     tts_engine: str = "simulation"
 
     realtime_enabled: bool = False
+    voice_api: Literal["gpt_live", "realtime"] = "gpt_live"
+    openai_live_url: str = "wss://api.openai.com/v1/live/sessions"
+    openai_live_model: str = "gpt-live-1"
+    openai_live_backend_model: str = "gpt-6-luna"
+    live_close_timeout_seconds: float = 5.0
+    live_max_output_buffer_seconds: float = 0.35
     openai_api_key: SecretStr | None = None
     openai_realtime_url: str = "wss://api.openai.com/v1/realtime"
     openai_realtime_model: str = "gpt-realtime-2.1"
@@ -180,6 +187,10 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env == RuntimeMode.PRODUCTION
+
+    @property
+    def voice_model(self) -> str:
+        return self.openai_live_model if self.voice_api == "gpt_live" else self.openai_realtime_model
 
     @property
     def dev_endpoints_enabled(self) -> bool:

@@ -16,6 +16,7 @@ class PlaybackWriter:
         self._task: asyncio.Task[None] | None = None
         self._clear_lock = asyncio.Lock()
         self._busy = False
+        self.queued_frames = 0
 
     @property
     def busy(self) -> bool:
@@ -31,6 +32,7 @@ class PlaybackWriter:
         self.start()
         try:
             self.queue.put_nowait((item_id, samples))
+            self.queued_frames += len(samples)
             return True
         except asyncio.QueueFull:
             return False
@@ -45,7 +47,8 @@ class PlaybackWriter:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
             while not self.queue.empty():
-                self.queue.get_nowait()
+                _, samples = self.queue.get_nowait()
+                self.queued_frames -= len(samples)
                 self.queue.task_done()
             await self.sink.clear_output()
 
@@ -67,4 +70,5 @@ class PlaybackWriter:
                     await self.sink.push_audio(samples)
             finally:
                 self._busy = False
+                self.queued_frames -= len(samples)
                 self.queue.task_done()
