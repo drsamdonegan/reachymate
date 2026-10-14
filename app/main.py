@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Callable
 
@@ -49,7 +50,7 @@ def create_app(
 
         @app.get("/camera/snapshot")
         async def camera_snapshot(request: Request) -> Response:
-            content = request.app.state.context.get_camera_snapshot()
+            content = await asyncio.to_thread(request.app.state.context.get_camera_snapshot)
             if content is None:
                 return Response(status_code=503)
             return Response(content=content, media_type="image/jpeg")

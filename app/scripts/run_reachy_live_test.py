@@ -56,6 +56,7 @@ def main() -> None:
     if args.demo:
         os.environ["FRONTDESK_URL"] = "http://127.0.0.1:8092"
         os.environ["MLAI_BACKEND_URL"] = "http://127.0.0.1:8091"
+        os.environ["UNCALIBRATED_CONVERSATION_DEMO"] = "true"
     if shutil.disk_usage(Path.cwd()).free < 5 * 2**30:
         raise SystemExit("Live test requires at least 5 GiB free")
 
@@ -101,6 +102,8 @@ def main() -> None:
     print("Reachy live test: say 'Hey Reachy', then speak normally.")
     print(f"Local diagnostics: http://{settings.host}:{settings.port}")
     print("Door action: placeholder only; no hardware actuation is possible.")
+    if settings.uncalibrated_conversation_demo and not settings.camera_calibration_path:
+        print("Attention: vendor intrinsics for conversation only; field calibration remains pending.")
     uvicorn.run(create_app(settings), host=settings.host, port=settings.port)
 
 

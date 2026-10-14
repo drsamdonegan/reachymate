@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -70,7 +71,7 @@ async def audio_diagnostics(request: Request) -> dict[str, Any]:
 
 @router.get("/diagnostics/camera")
 async def camera_diagnostics(request: Request) -> dict[str, Any]:
-    return get_ctx(request).camera_diagnostics()
+    return await asyncio.to_thread(get_ctx(request).camera_diagnostics)
 
 
 @router.get("/diagnostics/telemetry")

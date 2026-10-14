@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.models.enums import RuntimeMode
@@ -131,6 +131,7 @@ class Settings(BaseSettings):
     reachy_camera_name: str = "Reachy Mini Camera"
     reachy_camera_unique_id: str | None = None
     camera_calibration_path: str | None = None
+    uncalibrated_conversation_demo: bool = False
     xvf_profile: str = "factory"
     doa_bearing_validated: bool = False
     av_gate_mode: str = "demo"
@@ -158,6 +159,19 @@ class Settings(BaseSettings):
 
     data_dir: Path = Field(default_factory=lambda: BASE_DIR / "data")
     static_dir: Path = Field(default_factory=lambda: BASE_DIR / "app" / "static")
+
+    @model_validator(mode="after")
+    def restrict_uncalibrated_demo(self):
+        if self.uncalibrated_conversation_demo and (
+            self.app_env != RuntimeMode.STAGING
+            or self.access_mode != "shadow"
+            or self.physical_unlock_enabled
+            or self.door_stage != 0
+            or self.av_gate_mode != "demo"
+            or self.doa_bearing_validated
+        ):
+            raise ValueError("Uncalibrated conversation requires the staging shadow demo profile")
+        return self
 
     @property
     def is_sqlite(self) -> bool:

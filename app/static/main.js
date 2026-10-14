@@ -17,7 +17,7 @@ async function fetchJson(url, options = {}) {
 async function refreshHealth() {
   const response = await fetch("/healthz/ready");
   const payload = await response.json();
-  healthSummary.textContent = `Conversation: ${payload.conversation_ready ? "ready" : "not ready"} · Access: ${payload.access_ready ? "ready" : "shadow only"}`;
+  healthSummary.textContent = `Concierge services: ${payload.conversation_ready ? "ready" : "setup pending"} · Access: ${payload.access_ready ? "ready" : "shadow only"}`;
   healthTableBody.innerHTML = "";
   Object.entries(payload.components).forEach(([component, status]) => {
     const row = document.createElement("tr");
@@ -48,13 +48,39 @@ async function refreshCamera() {
   try {
     const response = await fetch(`/camera/snapshot?ts=${Date.now()}`);
     if (!response.ok) {
-      throw new Error("camera unavailable");
+      throw new Error("Camera off · say Hey Reachy or start a voice test");
     }
     const blob = await response.blob();
+    const previous = cameraFeed.src;
     cameraFeed.src = URL.createObjectURL(blob);
+    if (previous.startsWith("blob:")) URL.revokeObjectURL(previous);
     cameraStatus.textContent = "Live";
   } catch (error) {
-    cameraStatus.textContent = "Camera unavailable";
+    cameraFeed.removeAttribute("src");
+    cameraStatus.textContent = error.message;
+  }
+}
+
+async function refreshVoice() {
+  try {
+    const diagnostics = await fetchJson("/api/admin/diagnostics/audio");
+    const realtime = diagnostics.realtime;
+    const status = document.querySelector("#voice-test-status");
+    if (!realtime) {
+      status.textContent = "Realtime voice is disabled.";
+    } else if (realtime.last_error) {
+      status.textContent = `Realtime error: ${realtime.last_error}`;
+    } else if (!realtime.running) {
+      status.textContent = "Say “Hey Reachy” or start a voice test.";
+    } else {
+      const focus = diagnostics.attention?.face_present
+        ? "Face in view"
+        : "Move into Reachy's camera view to speak";
+      const mode = diagnostics.attention?.degraded_reason ? " · Uncalibrated bench demo" : "";
+      status.textContent = `${realtime.model} connected · ${focus}${mode}`;
+    }
+  } catch (error) {
+    document.querySelector("#voice-test-status").textContent = "Voice service unavailable.";
   }
 }
 
@@ -191,5 +217,8 @@ function fileToBase64(file) {
 refreshHealth();
 refreshEvents();
 refreshCamera();
+refreshVoice();
 setInterval(refreshCamera, 2000);
+setInterval(refreshVoice, 2000);
+setInterval(refreshHealth, 5000);
 connectTelemetry();

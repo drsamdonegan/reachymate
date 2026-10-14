@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import time
 
@@ -10,6 +11,8 @@ import numpy as np
 
 from app.services.reachy.daemon_client import stop_move
 from app.services.reachy.motion.manager import MotionMode
+
+logger = logging.getLogger(__name__)
 
 
 class RobotPowerManager:
@@ -28,9 +31,11 @@ class RobotPowerManager:
                     asyncio.shield(asyncio.wrap_future(future)), timeout=16 + self.sag_delay
                 )
                 self.parked, self.error = True, None
+                self.motion.error = None
                 return
             except Exception as exc:
                 self.error = type(exc).__name__
+                logger.warning("Park attempt %s failed: %s", attempt + 1, exc)
                 stop_move(self.motion.mini)
                 if attempt:
                     raise RuntimeError("park_failed_safe_hold") from exc
@@ -38,6 +43,9 @@ class RobotPowerManager:
     def _park(self) -> None:
         mini = self.motion.mini
         try:
+            # SDK goto_sleep sends targets but does not enable torque. Startup
+            # inherits disabled motors from the daemon's no-wake profile.
+            mini.enable_motors()
             mini.goto_sleep()
             before = self.daemon.state()
         finally:
@@ -53,7 +61,9 @@ class RobotPowerManager:
         actual = after.get("head_joints")
         if expected is None or actual is None or len(expected) != len(actual) or not actual:
             raise RuntimeError("sleep_joint_verification_unavailable")
-        if np.max(np.abs(np.asarray(expected) - np.asarray(actual))) > 0.10:
+        sag = float(np.max(np.abs(np.asarray(expected) - np.asarray(actual))))
+        logger.info("Sleep verification: torque disabled, maximum joint sag %.4f radians", sag)
+        if sag > 0.10:
             raise RuntimeError("sleep_joint_sag_exceeded")
         from reachy_mini.reachy_mini import SLEEP_HEAD_POSE
 

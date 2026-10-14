@@ -296,6 +296,7 @@ class AppContext:
             detector=self.detector,
             calibration=calibration,
             on_face=self.robot.look_at_face,
+            uncalibrated_demo=settings.uncalibrated_conversation_demo,
         )
         self.attention.worker.on_fault = self._hardware_fault
         if settings.mouth_landmarker_path and settings.mouth_landmarker_sha256:
@@ -733,11 +734,11 @@ class AppContext:
         return self.realtime.diagnostics()
 
     def get_camera_snapshot(self) -> bytes | None:
-        try:
-            return self.camera.get_snapshot_bytes()
-        finally:
-            if self.reachy_media is not None:
-                self.reachy_media.release_idle_camera()
+        # Dashboard polling must not wake the dormant camera or repeatedly
+        # tear down the capture that the engagement tracker is using.
+        if self.reachy_media is not None and not self.attention.enabled:
+            return None
+        return self.camera.get_snapshot_bytes()
 
     def audio_diagnostics(self) -> dict[str, Any]:
         diagnostics = self.audio_router.diagnostics()
@@ -745,6 +746,12 @@ class AppContext:
             diagnostics["reachy_media"] = self.reachy_media.diagnostics()
         if self.realtime is not None:
             diagnostics["realtime"] = self.realtime.diagnostics()
+        observation = self.attention.latest()
+        diagnostics["attention"] = {
+            "enabled": self.attention.enabled,
+            "degraded_reason": self.attention.degraded_reason,
+            "face_present": observation is not None and observation.in_zone,
+        }
         return diagnostics
 
     def telemetry_snapshot(self) -> list[dict[str, Any]]:
@@ -762,7 +769,7 @@ class AppContext:
                 "faces": [{"bbox": list(face.bbox), "confidence": face.confidence} for face in detections],
             }
         finally:
-            if self.reachy_media is not None:
+            if self.reachy_media is not None and not self.attention.enabled:
                 self.reachy_media.release_idle_camera()
 
     async def simulate_attempt(self) -> None:
@@ -964,7 +971,9 @@ class AppContext:
         self.system_health.set_status(
             "attention",
             HealthStatus.HEALTHY
-            if self.attention.tracker and self.attention.heartbeat.healthy()
+            if self.attention.tracker
+            and self.attention.heartbeat.healthy()
+            and not self.attention.degraded_reason
             else HealthStatus.DEGRADED,
             {"reason": self.attention.degraded_reason},
         )

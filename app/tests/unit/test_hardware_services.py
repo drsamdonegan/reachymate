@@ -170,15 +170,18 @@ async def test_power_call_order_and_sag_disable_finally():
 
     calls = []
     mini = SimpleNamespace(
-        goto_sleep=lambda: calls.append("sleep"), disable_motors=lambda: calls.append("disable")
+        enable_motors=lambda: calls.append("enable"),
+        goto_sleep=lambda: calls.append("sleep"),
+        disable_motors=lambda: calls.append("disable"),
     )
     state = {"head_joints": [0.0] * 7, "head_pose": {"m": SLEEP_HEAD_POSE.reshape(-1).tolist()}}
     daemon = SimpleNamespace(state=lambda: state, motors=lambda: {"mode": "disabled"})
     motion = MotionManager(mini)
     power = RobotPowerManager(motion, daemon, sag_delay=0)
     power._park()
-    assert calls == ["sleep", "disable"]
+    assert calls == ["enable", "sleep", "disable"]
     bad = SimpleNamespace(
+        enable_motors=lambda: calls.append("enable"),
         goto_sleep=lambda: (_ for _ in ()).throw(RuntimeError("broken")),
         disable_motors=lambda: calls.append("disabled_after_error"),
     )
