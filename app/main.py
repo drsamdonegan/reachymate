@@ -6,6 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import Callable
 
+import anyio
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
@@ -59,11 +60,28 @@ def create_app(
         async def telemetry_socket(websocket: WebSocket) -> None:
             await websocket.accept()
             queue = await websocket.app.state.context.telemetry.subscribe()
+
+            async def send_events() -> None:
+                try:
+                    while True:
+                        await websocket.send_json(await queue.get())
+                except WebSocketDisconnect:
+                    pass
+                finally:
+                    task_group.cancel_scope.cancel()
+
+            async def wait_disconnect() -> None:
+                try:
+                    while (await websocket.receive())["type"] != "websocket.disconnect":
+                        pass
+                finally:
+                    task_group.cancel_scope.cancel()
+
             try:
-                while True:
-                    event = await queue.get()
-                    await websocket.send_json(event)
-            except WebSocketDisconnect:
+                async with anyio.create_task_group() as task_group:
+                    task_group.start_soon(send_events)
+                    task_group.start_soon(wait_disconnect)
+            finally:
                 websocket.app.state.context.telemetry.unsubscribe(queue)
 
     return app

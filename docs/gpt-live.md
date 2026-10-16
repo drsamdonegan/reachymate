@@ -45,4 +45,6 @@ On shutdown the client immediately clears local playback, discards further model
 
 Transcript telemetry contains character counts and timing only. Diagnostics verify transport overlap, while an attended interruption test verifies what the person hears. Follow [the functionality checklist](testing.md); measured speaker isolation, enrollment, anti-spoofing and live front-desk delivery remain separate acceptance gates.
 
+Dashboard reconnections replay only the recent events that fit the subscriber queue. Disconnected clients release their subscription even during shutdown, and the browser retains at most 200 displayed events.
+
 Protocol references: [Live WebSockets](https://developers.openai.com/api/docs/guides/voice-websockets?api=live), [Responses delegation and tools](https://developers.openai.com/api/docs/guides/live-delegation?delegation-mode=responses), [playback controls](https://developers.openai.com/api/docs/guides/voice-server-controls?api=live#control-playback-when-needed) and [migration](https://developers.openai.com/api/docs/guides/live-migration).

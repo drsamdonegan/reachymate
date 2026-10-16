@@ -35,9 +35,11 @@ class TelemetryBroker:
 
     async def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=100)
+        # Reconnect must never await a queue whose consumer cannot start until
+        # this method returns. Replay only the recent history that fits.
+        for event in self.snapshot()[-queue.maxsize :]:
+            queue.put_nowait(event)
         self._subscribers.add(queue)
-        for event in self.snapshot():
-            await queue.put(event)
         return queue
 
     def unsubscribe(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
