@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     wakeword_vosk_fallback_enabled: bool = False
     vosk_model_path: str = str(BASE_DIR / "data" / "models" / "vosk-en")
     tts_engine: str = "simulation"
+    motion_assets_dir: str = str(BASE_DIR / "data" / "movements")
 
     realtime_enabled: bool = False
     voice_api: Literal["gpt_live", "realtime"] = "gpt_live"

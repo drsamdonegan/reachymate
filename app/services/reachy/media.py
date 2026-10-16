@@ -42,6 +42,7 @@ class ReachyMediaAdapter:
         self._empty_reads = 0
         self._max_input_bytes = settings.sample_rate_hz * 2 * 2
         self._direct_camera: Any | None = None
+        self._camera_device_info: dict | None = None
         self._direct_input_stream: Any | None = None
         self._direct_output_stream: Any | None = None
         # Preserve roughly five seconds across an occasional blocking camera
@@ -385,6 +386,7 @@ class ReachyMediaAdapter:
 
     def diagnostics(self) -> dict[str, Any]:
         return {
+            "camera_source": self._camera_device_info,
             "connected": self.connected,
             "recording": self._recording,
             "playing": self._playing,
@@ -435,18 +437,19 @@ class ReachyMediaAdapter:
         import cv2
 
         backend = cv2.CAP_AVFOUNDATION if os.uname().sysname == "Darwin" else cv2.CAP_ANY
-        from app.services.system.tcc import permission_status, resolve_camera
+        from app.services.system.tcc import permission_status, resolve_camera_device
 
         if permission_status().get("camera") in {"denied", "restricted"}:
             raise RuntimeError("camera_tcc_denied")
-        index = (
-            resolve_camera(
+        if os.uname().sysname == "Darwin":
+            self._camera_device_info = resolve_camera_device(
                 name=getattr(self.settings, "reachy_camera_name", "Reachy Mini Camera"),
                 unique_id=getattr(self.settings, "reachy_camera_unique_id", None),
             )
-            if os.uname().sysname == "Darwin"
-            else self.settings.reachy_camera_device_index
-        )
+            index = self._camera_device_info["index"]
+        else:
+            index = self.settings.reachy_camera_device_index
+            self._camera_device_info = {"index": index, "name": self.settings.reachy_camera_name}
         self._direct_camera = cv2.VideoCapture(index, backend)
         if not self._direct_camera.isOpened():
             self._direct_camera.release()

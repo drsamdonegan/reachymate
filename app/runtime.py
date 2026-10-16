@@ -391,6 +391,7 @@ class AppContext:
             self.realtime.registry.set_handler("route_visitor", self._route_visitor)
             self.realtime.registry.set_handler("notify_staff", self._notify_staff)
             self.realtime.registry.set_handler("get_visitor_request_status", self._visitor_status)
+            self.realtime.registry.set_handler("robot_motion", self._robot_motion)
 
         self.vad = VoiceActivityDetector(settings.vad_model_path, threshold=settings.vad_threshold)
         self.wakeword = WakeWordDetector(
@@ -736,6 +737,15 @@ class AppContext:
         await self.conversation.handle_wake()
         return self.realtime.diagnostics()
 
+    async def send_voice_request(self, text: str) -> dict[str, str]:
+        if self.realtime is None or not self.realtime.running or self.realtime._input_suspended:
+            raise RuntimeError("Start a voice test and finish any local consent step first")
+        sender = getattr(self.realtime, "send_text", None)
+        if sender is None:
+            raise RuntimeError("Text requests require GPT-Live")
+        await sender(text)
+        return {"status": "sent"}
+
     def get_camera_snapshot(self) -> bytes | None:
         # Dashboard polling must not wake the dormant camera or repeatedly
         # tear down the capture that the engagement tracker is using.
@@ -764,7 +774,36 @@ class AppContext:
                 "joint_sag_limit_radians": power.joint_sag_limit,
                 "bench_tolerance": self.settings.uncalibrated_conversation_demo,
             }
+        motion = getattr(self.robot, "motion", None)
+        if motion:
+            diagnostics["motion"] = motion.expression_diagnostics()
         return diagnostics
+
+    def robot_motion_capabilities(self) -> dict:
+        capabilities = getattr(self.robot, "motion_capabilities", None)
+        return capabilities() if capabilities else {"ready": False, "axes": [], "dances": [], "emotions": []}
+
+    async def _robot_motion(self, arguments: dict, _call_id: str = "dashboard") -> dict:
+        from app.services.reachy.motion.commands import RobotMotionRequest
+
+        request = RobotMotionRequest.model_validate(arguments)
+        if request.action == "capabilities":
+            return {"status": "available", **self.robot_motion_capabilities()}
+        perform = getattr(self.robot, "perform_motion", None)
+        if perform is None:
+            return {"status": "unavailable"}
+        if request.action != "stop":
+            if (
+                not self.guard.is_engaged()
+                or self.state_machine.state != AppState.ENGAGED
+                or self.realtime is not None
+                and self.realtime._input_suspended
+            ):
+                return {"status": "blocked", "reason": "start_voice_test_or_finish_local_check_first"}
+        result = await perform(request)
+        if result.get("status") == "started":
+            self.conversation.gated_activity()
+        return result
 
     def telemetry_snapshot(self) -> list[dict[str, Any]]:
         return self.telemetry.snapshot()
@@ -1068,6 +1107,9 @@ class AppContext:
         self.attention.set_enabled(True)
 
     async def _play_consent_notice(self) -> None:
+        motion = getattr(self.robot, "motion", None)
+        if motion:
+            motion.stop_expression()
         # Simulation models the duration; hardware uses the pinned local clip.
         if self.reachy_media is None:
             from app.services.conversation.fallback_audio import CONSENT_NOTICE
@@ -1089,6 +1131,12 @@ class AppContext:
             )
 
     async def _end_engagement(self) -> None:
+        motion = getattr(self.robot, "motion", None)
+        if motion:
+            motion.stop_expression()
+            from app.services.reachy.motion.manager import MotionMode
+
+            motion.set_mode(MotionMode.IDLE_NEUTRAL)
         self.attention.set_enabled(False)
         self.av_gate.reset()
         if self.reachy_media:

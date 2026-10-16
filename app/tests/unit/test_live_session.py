@@ -99,7 +99,7 @@ def test_live_start_uses_native_continuous_audio_and_only_existing_tools(setting
     assert config["model"] == "gpt-live-1"
     assert config["audio"]["format"] == {"type": "audio/pcm", "rate": 16000}
     assert config["store"] is False
-    assert len(config["delegation"]["responses"]["tools"]) == 7
+    assert len(config["delegation"]["responses"]["tools"]) == 8
     assert config["delegation"]["responses"]["parallel_tool_calls"] is False
     assert "turn_detection" not in config["audio"]
     assert "output_modalities" not in config and "tools" not in config

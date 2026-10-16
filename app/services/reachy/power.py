@@ -117,3 +117,6 @@ class RobotPowerManager:
         target = create_head_pose(yaw=max(-35, min(35, math.degrees(bearing))), degrees=True)
         mini.goto_target(head=target, duration=0.6, body_yaw=None)
         self.motion.set_tracking_target(target)
+        rebase = getattr(self.motion, "rebase_frame", None)
+        if rebase:
+            rebase(target)

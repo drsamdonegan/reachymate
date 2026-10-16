@@ -4,6 +4,7 @@ const eventsList = document.querySelector("#events-list");
 const telemetryFeed = document.querySelector("#telemetry-feed");
 const cameraFeed = document.querySelector("#camera-feed");
 const cameraStatus = document.querySelector("#camera-status");
+let cameraSourceName = "Reachy Mini Camera";
 
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
@@ -55,7 +56,7 @@ async function refreshCamera() {
     const previous = cameraFeed.src;
     cameraFeed.src = URL.createObjectURL(blob);
     if (previous.startsWith("blob:")) URL.revokeObjectURL(previous);
-    cameraStatus.textContent = "Live";
+    cameraStatus.textContent = `Live · ${cameraSourceName}`;
   } catch (error) {
     cameraFeed.removeAttribute("src");
     cameraStatus.textContent = error.message;
@@ -65,6 +66,11 @@ async function refreshCamera() {
 async function refreshVoice() {
   try {
     const diagnostics = await fetchJson("/api/admin/diagnostics/audio");
+    cameraSourceName = diagnostics.reachy_media?.camera_source?.name || "Reachy Mini Camera";
+    const movement = diagnostics.motion;
+    document.querySelector("#motion-status").textContent = movement
+      ? `Motion: ${movement.status}${movement.name ? ` · ${movement.name}` : ""} · ${movement.mode}`
+      : "";
     const realtime = diagnostics.voice || diagnostics.realtime;
     const status = document.querySelector("#voice-test-status");
     const audioStatus = document.querySelector("#voice-audio-status");
@@ -114,6 +120,74 @@ document.querySelector("#refresh-health").addEventListener("click", refreshHealt
 document.querySelector("#refresh-events").addEventListener("click", refreshEvents);
 document.querySelector("#clear-feed").addEventListener("click", () => {
   telemetryFeed.innerHTML = "";
+});
+
+let movementCatalogue = { dances: [], emotions: [] };
+document.querySelector("#robot-request-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const result = document.querySelector("#motion-result");
+  try {
+    await fetchJson("/api/admin/conversation/request", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({text: document.querySelector("#robot-request-text").value.trim()}),
+    });
+    result.textContent = "Request sent to GPT-Live. Watch motion status for the result.";
+  } catch (error) {
+    result.textContent = error.message;
+  }
+});
+function refreshMovementOptions() {
+  const kind = document.querySelector("#motion-kind").value === "dance" ? "dances" : "emotions";
+  const select = document.querySelector("#motion-name");
+  select.replaceChildren(...movementCatalogue[kind].map((name) => {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name.replaceAll("_", " ");
+    return option;
+  }));
+  if (kind === "dances" && movementCatalogue.dances.includes("groovy_sway_and_roll")) {
+    select.value = "groovy_sway_and_roll";
+  }
+}
+async function sendRobotMotion(payload) {
+  const result = document.querySelector("#motion-result");
+  try {
+    const response = await fetchJson("/api/admin/robot/motion", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    const amplitude = response.amplitude_scale < 1 ? ` · ${Math.round(response.amplitude_scale * 100)}% amplitude for reachability` : "";
+    result.textContent = `${response.status}${response.movement ? ` · ${response.movement}` : ""}${amplitude}${response.reason ? ` · ${response.reason.replaceAll("_", " ")}` : ""}`;
+  } catch (error) {
+    result.textContent = `Movement failed: ${error.message}`;
+  }
+}
+document.querySelectorAll("[data-robot-motion]").forEach((button) => {
+  button.addEventListener("click", () => sendRobotMotion({
+    action: button.dataset.robotMotion,
+    ...(button.dataset.direction ? { direction: button.dataset.direction } : {}),
+    ...(button.dataset.name ? { name: button.dataset.name } : {}),
+  }));
+});
+document.querySelector("#motion-kind").addEventListener("change", refreshMovementOptions);
+document.querySelector("#motion-library-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await sendRobotMotion({action: document.querySelector("#motion-kind").value,
+    name: document.querySelector("#motion-name").value, duration_seconds: 12});
+});
+document.querySelector("#motion-pose-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const payload = {action: "pose"};
+  for (const [key, value] of new FormData(event.currentTarget)) {
+    if (value !== "") payload[key] = Number(value);
+  }
+  await sendRobotMotion(payload);
+});
+fetchJson("/api/admin/robot/motions").then((catalogue) => {
+  movementCatalogue = catalogue;
+  refreshMovementOptions();
+  document.querySelector("#motion-result").textContent = `${catalogue.dances.length} dances · ${catalogue.emotions.length} expressions · Head, body and both antennas`;
+}).catch(() => {
+  document.querySelector("#motion-result").textContent = "Movement controls are waiting for the robot runtime.";
 });
 
 document.querySelector("#speech-form").addEventListener("submit", async (event) => {

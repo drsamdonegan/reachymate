@@ -1,4 +1,4 @@
-"""Closed, typed tool boundary: the model has no identity or actuator authority."""
+"""Typed tools: no identity or door actuator authority; robot motion is bounded."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+from app.services.reachy.motion.commands import RobotMotionRequest
 
 
 class ToolArguments(BaseModel):
@@ -84,7 +86,7 @@ class EndArguments(ToolArguments):
     reason: EndReason
 
 
-TOOL_MODELS: dict[str, type[ToolArguments]] = {
+TOOL_MODELS: dict[str, type[BaseModel]] = {
     "search_public_knowledge": KnowledgeArguments,
     "request_access_check": NoArguments,
     "route_visitor": RouteArguments,
@@ -92,6 +94,7 @@ TOOL_MODELS: dict[str, type[ToolArguments]] = {
     "get_visitor_request_status": NoArguments,
     "wait_for_user": NoArguments,
     "end_conversation": EndArguments,
+    "robot_motion": RobotMotionRequest,
 }
 TOOL_DESCRIPTIONS = {
     "search_public_knowledge": (
@@ -108,6 +111,12 @@ TOOL_DESCRIPTIONS = {
     "get_visitor_request_status": "Retrieve the status code for this visitor's current request.",
     "wait_for_user": "Audio is side chatter or noise. Remain silent and await the visitor.",
     "end_conversation": "Finish once current audio has drained.",
+    "robot_motion": (
+        "Control Reachy's head translation/orientation, body yaw and both antennas. "
+        "Use capabilities to list installed dances/emotions and motion limits; look in a direction "
+        "or around; pose in mm/degrees; gesture nod/shake/wiggle_antennas/neutral; dance or emotion "
+        "by installed name; stop immediately. New motions replace previous ones. No door authority."
+    ),
 }
 
 
@@ -179,7 +188,12 @@ class ToolRegistry:
             return self._results[call_id]
         if call_id in self._inflight:
             return await asyncio.shield(self._inflight[call_id])
-        if len(self._results) + len(self._inflight) >= self.session_limit:
+        is_stop = name == "robot_motion" and (
+            arguments.get("action") == "stop"
+            if isinstance(arguments, dict)
+            else isinstance(arguments, str) and len(arguments) <= 4096 and _is_motion_stop(arguments)
+        )
+        if not is_stop and len(self._results) + len(self._inflight) >= self.session_limit:
             return {"status": "rate_limited"}
         task = asyncio.create_task(self._dispatch(name, arguments, call_id=call_id))
         self._inflight[call_id] = task
@@ -236,3 +250,10 @@ class ToolRegistry:
             raise
         except Exception:
             return {"status": "unavailable"}
+
+
+def _is_motion_stop(arguments: str) -> bool:
+    try:
+        return RobotMotionRequest.model_validate_json(arguments).action == "stop"
+    except ValueError:
+        return False

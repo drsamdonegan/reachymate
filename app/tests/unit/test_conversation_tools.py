@@ -84,9 +84,10 @@ def session_for(settings):
     return session, playback, connection
 
 
-def test_seven_closed_tools_and_privacy_schema(settings):
+def test_concierge_and_robot_motion_tools_keep_door_boundary(settings):
     schemas = tool_schemas()
-    assert len(schemas) == 7
+    assert len(schemas) == 8
+    assert schemas[-1]["name"] == "robot_motion"
     assert all(tool["parameters"]["additionalProperties"] is False for tool in schemas)
     assert not any("door" in tool["name"] for tool in schemas)
     configured = build_session_update(settings)["session"]
@@ -324,7 +325,7 @@ def test_schema_validates_with_installed_openai_types(settings):
 
     parsed = SessionUpdateEvent.model_validate(build_session_update(settings))
     assert parsed.session.type == "realtime"
-    assert len(parsed.session.tools) == 7
+    assert len(parsed.session.tools) == 8
 
 
 @pytest.mark.asyncio

@@ -58,6 +58,7 @@ data/*.sqlite
 data/*.sqlite3
 data/*.db-*
 data/models/
+data/movements/
 
 # macOS
 .DS_Store

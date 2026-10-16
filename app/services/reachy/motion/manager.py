@@ -12,6 +12,8 @@ from enum import Enum
 
 import numpy as np
 
+from app.services.reachy.motion.expressions import Frame, MotionSequence, safe_frame
+
 
 class MotionMode(str, Enum):
     PARKED = "parked"
@@ -47,6 +49,14 @@ class MotionManager:
         self.last_motion_at = 0.0
         self.last_success = None
         self.error = None
+        self._expression: MotionSequence | None = None
+        self._expression_started = 0.0
+        self._held_frame: Frame | None = None
+        self._frame = Frame.neutral()
+        self.expression_status = "idle"
+        self.expression_label: str | None = None
+        self.expression_amplitude_scale = 1.0
+        self._expression_generation = 0
 
     def start(self) -> None:
         if self.thread is None:
@@ -55,6 +65,7 @@ class MotionManager:
             self.thread.start()
 
     async def stop(self) -> None:
+        self.stop_expression()
         self._stop.set()
         if self.thread:
             await asyncio.to_thread(self.thread.join, 3)
@@ -75,6 +86,61 @@ class MotionManager:
             self.mode = mode
             if mode in {MotionMode.PARKED, MotionMode.CAPTURE_FREEZE}:
                 self._offsets = (0.0,) * 6
+            if mode != MotionMode.ENGAGED:
+                self._expression_generation += 1
+                self._expression = self._held_frame = None
+                self.expression_status = "cancelled"
+
+    def frame(self) -> Frame:
+        with self._lock:
+            return self._frame.copy()
+
+    def rebase_frame(self, head, *, body=0.0) -> None:
+        with self._lock:
+            self._frame = Frame(np.asarray(head).copy(), np.radians([-10.0, 10.0]), body)
+
+    def reserve_expression(self) -> int | None:
+        with self._lock:
+            if self.mode != MotionMode.ENGAGED or self.in_flight:
+                return None
+            self._expression_generation += 1
+            self._expression = None
+            self._held_frame = self._frame.copy()
+            return self._expression_generation
+
+    def play_expression(self, sequence: MotionSequence, *, generation: int | None = None) -> bool:
+        with self._lock:
+            if self.mode != MotionMode.ENGAGED or self.in_flight:
+                return False
+            if generation is not None and generation != self._expression_generation:
+                return False
+            self._expression, self._expression_started = sequence, time.monotonic()
+            self._held_frame = None
+            self.expression_label, self.expression_status = sequence.label, "running"
+            self.expression_amplitude_scale = sequence.amplitude_scale
+            return True
+
+    def stop_expression(self) -> None:
+        with self._lock:
+            self._expression_generation += 1
+            self._expression = None
+            self._held_frame = self._frame.copy() if self.mode == MotionMode.ENGAGED else None
+            self.expression_status = "stopped"
+
+    def expression_diagnostics(self) -> dict:
+        with self._lock:
+            return {
+                "mode": self.mode.value,
+                "status": self.expression_status,
+                "name": self.expression_label,
+                "amplitude_scale": self.expression_amplitude_scale,
+                "active": self._expression is not None,
+                "remaining_seconds": max(
+                    0, self._expression.duration - (time.monotonic() - self._expression_started)
+                )
+                if self._expression
+                else 0,
+            }
 
     def set_tracking_target(self, pose) -> None:
         with self._lock:
@@ -123,6 +189,8 @@ class MotionManager:
                 continue
             with self._lock:
                 mode, target, offsets = self.mode, self.target.copy(), self._offsets
+                sequence, started = self._expression, self._expression_started
+                held, previous = self._held_frame, self._frame.copy()
             if mode not in {MotionMode.PARKED, MotionMode.CAPTURE_FREEZE}:
                 try:
                     x, y, z, roll, pitch, yaw = offsets
@@ -130,7 +198,26 @@ class MotionManager:
                     if mode == MotionMode.ENGAGED:
                         z += 0.0015 * math.sin(time.monotonic() * math.pi)
                     offset = create_head_pose(x=x, y=y, z=z, roll=roll, pitch=pitch, yaw=yaw, degrees=False)
-                    self.mini.set_target(head=clamp_pose(target @ offset), body_yaw=None)
+                    if sequence is not None:
+                        elapsed = time.monotonic() - started
+                        self.last_motion_at = time.monotonic()
+                        requested = sequence.evaluate(elapsed)
+                    elif held is not None:
+                        requested = held
+                    else:
+                        requested = Frame(clamp_pose(target @ offset), previous.antennas, 0.0)
+                    frame = safe_frame(requested, previous, 0.02)
+                    self.mini.set_target(head=frame.head, antennas=frame.antennas, body_yaw=frame.body)
+                    with self._lock:
+                        self._frame = frame
+                        if (
+                            sequence is not None
+                            and sequence is self._expression
+                            and elapsed >= sequence.duration
+                        ):
+                            self._expression = None
+                            self._held_frame = frame.copy()
+                            self.expression_status = "completed"
                     self.last_success = time.monotonic()
                 except Exception as exc:
                     self.error = type(exc).__name__

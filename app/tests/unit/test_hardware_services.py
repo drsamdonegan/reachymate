@@ -158,7 +158,7 @@ async def test_motion_serialises_goto_and_streaming_and_clamps():
     names = [name for name, _, _ in operations]
     assert names[names.index("goto_begin") + 1] == "goto_end"
     assert len(set(tid for _, tid, _ in operations)) == 1
-    assert all(call[2].get("body_yaw") is None for call in operations if call[0] == "set")
+    assert all(call[2].get("body_yaw") == 0 for call in operations if call[0] == "set")
     with pytest.raises(ValueError):
         clamp_pose(np.zeros((3, 3)))
 

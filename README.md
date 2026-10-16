@@ -1,6 +1,6 @@
 # Reachy concierge
 
-FastAPI concierge for Reachy Mini Lite. The canonical runtime is `app/`. Local wake detection starts an engagement; a detection-only face tracker and an audio-visual gate select speech for a bounded GPT-Live conversation. `gpt-live-1` listens while speaking; its `gpt-6-luna` Responses backend has seven typed tools and no identity or door actuator capability.
+FastAPI concierge for Reachy Mini Lite. The canonical runtime is `app/`. Local wake detection starts an engagement; a detection-only face tracker and an audio-visual gate select speech for a bounded GPT-Live conversation. `gpt-live-1` listens while speaking; its `gpt-6-luna` Responses backend has seven concierge tools plus a bounded robot movement tool, with no identity or door actuator capability.
 
 Face checks require a fixed local notice followed by the visitor's own locally recognised “check me in”. Enrollment requires recorded voluntary consent and encrypted templates. Routed visitors cannot start a face check during that engagement.
 
@@ -12,6 +12,7 @@ Face checks require a fixed local notice followed by the visitor's own locally r
 uv sync --frozen --python 3.11.14 --extra audio --extra vision --extra reachy --extra skills --extra dev
 cp .env.example .env
 uv run python -m app.scripts.provision_models
+uv run python -m app.scripts.provision_movements
 ```
 
 Generate a 32-byte URL-safe base64 `DATA_ENCRYPTION_KEY` and a separate random `REALTIME_SAFETY_IDENTIFIER_KEY`; keep them in private local secrets. A real robot run or enrollment requires encryption. Never commit keys, images, audio corpora or database files.
@@ -33,6 +34,8 @@ Admin routes are disabled unless `ALLOW_DEV_ENDPOINTS=true` and are never regist
 The demo profile uses loopback front-desk/bookings mocks and forces shadow mode. Without measured camera calibration it uses SDK intrinsics for detection-only conversation, reports degraded attention, and disables face-directed motion. Its bench-only joint-settling allowance is 0.18 rad; normal profiles retain 0.10 rad, and every profile still verifies torque off and the sleep head pose. This demo does not grant biometric consent or approve hardware deployment. Complete camera calibration and direction surveys before live conversation acceptance.
 
 The launcher selects `VOICE_API=gpt_live` and `TTS_ENGINE=live`. Cloud voice still uses the existing `REALTIME_ENABLED` enable switch and `REALTIME_SAFETY_IDENTIFIER_KEY` secret. The previous Realtime transport remains explicitly selectable with `VOICE_API=realtime`; connection failures do not switch APIs automatically. See [GPT-Live transport](docs/gpt-live.md) for configuration, lifecycle and diagnostics.
+
+The same dashboard includes look, gesture, dance, expression and numeric pose controls. Voice requests use `robot_motion` for all six head coordinates, body yaw and both antennas, plus 19 pinned Pollen dances and 85 expressions. A single motion thread applies reachability, relative-yaw, duration and speed limits. Recordings reduce amplitude when necessary; numeric pose requests are rejected if unreachable. Stop cancels playback; parking, consent/capture freeze and engagement end cancel manual movements. Recorded motion does not play its sound sidecars over the conversation. On macOS the camera selector matches OpenCV's unique-ID ordering and shows the selected Reachy camera name in the preview.
 
 ## Verification
 
