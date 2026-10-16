@@ -37,6 +37,8 @@ The launcher selects `VOICE_API=gpt_live` and `TTS_ENGINE=live`. Cloud voice sti
 
 For uninterrupted bench conversation, click **Start chat**. The staging demo streams Reachy's microphone continuously for up to ten minutes, including while he looks away or dances. **Stop chat** ends it immediately. Wake-word concierge sessions continue to use the face/audio gate; local biometric consent remains gated in both modes. The dashboard shows the active mode and remaining time.
 
+The staging demo also supports camera questions such as **What can you see?** and **What am I holding?** A fresh still from Reachy's camera goes to the existing vision-capable Responses backend, whose findings GPT-Live speaks. The dashboard shows model snapshot counts and its latest observation. Snapshots are on request, never a continuous video stream; model vision is opt-in and limited to attended chat.
+
 The same dashboard includes look, gesture, dance, expression and numeric pose controls. Voice requests use `robot_motion` for all six head coordinates, body yaw and both antennas, plus 19 pinned Pollen dances and 85 expressions. A single motion thread applies reachability, relative-yaw, duration and speed limits. Recordings reduce amplitude when necessary; numeric pose requests are rejected if unreachable. Stop cancels playback; parking, consent/capture freeze and engagement end cancel manual movements. Recorded motion does not play its sound sidecars over the conversation. On macOS the camera selector matches OpenCV's unique-ID ordering and shows the selected Reachy camera name in the preview.
 
 ## Verification

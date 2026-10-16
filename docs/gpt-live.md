@@ -18,6 +18,7 @@ LIVE_MAX_OUTPUT_BUFFER_SECONDS=1.0
 LIVE_PLAYBACK_RESERVE_SECONDS=0.2
 ATTENDED_CHAT_ENABLED=false
 ATTENDED_CHAT_MAX_SECONDS=600
+CAMERA_VISION_ENABLED=false
 ```
 
 Keep `OPENAI_API_KEY` and `REALTIME_SAFETY_IDENTIFIER_KEY` in local secrets. The existing `REALTIME_*` enable switch, voice, safety identifier, queue and timeout settings are retained for compatibility. `VOICE_API=realtime` explicitly selects the previous transport; GPT-Live failures do not replay speech or switch to Realtime.
@@ -31,6 +32,16 @@ The voice model delegates task work to Responses. The backend receives the seven
 `robot_motion` exposes capability discovery, looks, all head/body/antenna pose coordinates, gestures, installed dances/emotions and stop. Motions replace an existing performance, run on the single SDK motion thread, and obey local reachability and speed limits. Parking or capture freeze cancels them; model calls cannot enable motor torque. Stop remains available after the ordinary tool budget is exhausted. Provision the pinned Apache-2.0 Pollen recordings with `python -m app.scripts.provision_movements`; playback does not download data or play sidecar sounds.
 
 The fixed biometric notice uses a local recording. Its consent window mutes cloud input and discards model output; server mute does not itself silence the model. Normal audio resumes after the local controller completes this flow and the server acknowledges unmute. Controller announcements use Live commentary; an acknowledgment confirms acceptance, not that a visitor heard the announcement.
+
+## Camera questions
+
+The staging `--demo` launcher enables `CAMERA_VISION_ENABLED` for attended chat. Ask **What can you see?**, **What am I holding?** or **What color is this?** The voice model delegates to a ninth typed tool, `inspect_camera`, which reads the existing Reachy camera owner and prepares a fresh JPEG in memory. It waits briefly for a requested movement to finish, limits the image to 1280 pixels and 512 KiB, and accepts no file paths or external image URLs. Capture is unavailable outside active attended chat, during local consent, or with a non-Reachy camera.
+
+The application returns all pending function results, queues the image as a Responses `input_image` using `response.item.create`, then continues the backend with `response.create`. `gpt-6-luna` interprets the image and GPT-Live speaks its findings. The audio frontend receives no direct images. This follows [OpenAI's visual context guidance](https://developers.openai.com/api/docs/guides/live-delegation#add-images-and-visual-context).
+
+Snapshots go to OpenAI only on visual requests; there is no continuous video upload or local image archive. Ordinary microphone streaming continues while capture and image analysis run. Failed, late or consent-suspended captures do not transmit images or terminate voice. The tool shares the session's bounded call budget and allows at most one capture attempt per two seconds. Pixels are untrusted input, never identity evidence or access authority.
+
+The dashboard separately shows the number and age of model snapshots and the backend's latest camera observation. This one bounded observation is kept in memory only and cleared on stop; telemetry records counts and dimensions, not pixels, questions or observation text. The local preview alone does not indicate model vision is connected.
 
 On shutdown the client immediately clears local playback, discards further model audio, sends `session.close`, waits up to five seconds for `session.closed` and final cumulative usage, then releases playback and the socket. Attended mode pauses only the ordinary idle watchdog; its ten-minute deadline and the transport's maximum session age still apply. A connection failure closes the engagement through the existing local fallback and bounded circuit breaker. Start chat can retry a failed cloud session immediately.
 

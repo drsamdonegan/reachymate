@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     live_max_output_buffer_seconds: float = Field(default=1.0, ge=0.4, le=3.0)
     live_playback_reserve_seconds: float = Field(default=0.2, ge=0, le=0.4)
     attended_chat_enabled: bool = False
+    camera_vision_enabled: bool = False
     attended_chat_max_seconds: float = Field(default=600, ge=30, le=900)
     openai_api_key: SecretStr | None = None
     openai_realtime_url: str = "wss://api.openai.com/v1/realtime"
@@ -173,6 +174,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def restrict_uncalibrated_demo(self):
+        if self.camera_vision_enabled and not self.attended_chat_enabled:
+            raise ValueError("Model camera vision requires attended chat")
         if self.attended_chat_enabled and (
             self.app_env != RuntimeMode.STAGING
             or not self.allow_dev_endpoints

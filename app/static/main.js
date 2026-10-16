@@ -73,12 +73,18 @@ async function refreshVoice() {
       : "";
     const realtime = diagnostics.voice || diagnostics.realtime;
     const conversation = diagnostics.conversation || {};
+    const vision = realtime?.vision;
+    document.querySelector("#model-vision-status").textContent = vision?.enabled
+      ? `Model vision: Reachy camera snapshots on request · ${vision.images_sent} sent${vision.last_image_age_seconds == null ? "" : ` · Last capture ${Math.round(vision.last_image_age_seconds)}s ago`}${vision.last_error ? ` · ${vision.last_error}` : ""}`
+      : "Model vision: unavailable in this profile.";
+    document.querySelector("#model-vision-observation").textContent = vision?.last_observation
+      ? `Last camera observation: ${vision.last_observation}` : "";
     const attended = conversation.mode === "attended_chat";
     document.querySelector("#start-voice-test").textContent = conversation.attended_available
       ? "Start chat" : "Start Voice Test";
     document.querySelector("#stop-voice-test").disabled = !realtime?.running;
     document.querySelector("#voice-mode-notice").textContent = conversation.attended_available
-      ? `Start chat streams Reachy's microphone to OpenAI until Stop chat or ${Math.ceil(conversation.max_seconds / 60)} minutes. Looking around won't mute your conversation.`
+      ? `Start chat streams Reachy's microphone to OpenAI until Stop chat or ${Math.ceil(conversation.max_seconds / 60)} minutes. Looking around won't mute your conversation.${vision?.enabled ? " Visual questions send a fresh camera snapshot to OpenAI." : ""}`
       : "";
     const status = document.querySelector("#voice-test-status");
     const audioStatus = document.querySelector("#voice-audio-status");

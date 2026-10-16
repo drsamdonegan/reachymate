@@ -27,6 +27,10 @@ class KnowledgeArguments(ToolArguments):
     query: str = Field(min_length=1, max_length=500, strict=True)
 
 
+class CameraArguments(ToolArguments):
+    question: str = Field(min_length=1, max_length=500, strict=True)
+
+
 class VisitorIntent(str, Enum):
     GUEST = "guest_of_member"
     DELIVERY = "delivery"
@@ -95,6 +99,7 @@ TOOL_MODELS: dict[str, type[BaseModel]] = {
     "wait_for_user": NoArguments,
     "end_conversation": EndArguments,
     "robot_motion": RobotMotionRequest,
+    "inspect_camera": CameraArguments,
 }
 TOOL_DESCRIPTIONS = {
     "search_public_knowledge": (
@@ -117,10 +122,15 @@ TOOL_DESCRIPTIONS = {
         "or around; pose in mm/degrees; gesture nod/shake/wiggle_antennas/neutral; dance or emotion "
         "by installed name; stop immediately. New motions replace previous ones. No door authority."
     ),
+    "inspect_camera": (
+        "Inspect a fresh still from Reachy's own camera to answer the caller's visual question. "
+        "Use for what can you see, objects, colors, clothing or visible text. "
+        "Not a video feed, identity check, face recognition or access decision."
+    ),
 }
 
 
-def tool_schemas() -> list[dict[str, Any]]:
+def tool_schemas(*, include_vision: bool = False) -> list[dict[str, Any]]:
     """Return full GA Realtime function definitions, never bare names."""
 
     return [
@@ -131,6 +141,7 @@ def tool_schemas() -> list[dict[str, Any]]:
             "parameters": model.model_json_schema(),
         }
         for name, model in TOOL_MODELS.items()
+        if include_vision or name != "inspect_camera"
     ]
 
 

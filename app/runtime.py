@@ -52,6 +52,7 @@ from app.services.vision.enrollment import EnrollmentService
 from app.services.vision.face_detect import YuNetFaceDetector
 from app.services.vision.face_embed import SFaceEmbedder
 from app.services.vision.face_match import FaceMatcher, IdentificationService
+from app.services.vision.model_view import ModelCameraView, capture_model_view
 from app.services.vision.pose import FacePoseEstimator
 from app.state_machine import OfficeBouncerStateMachine
 from app.storage.db import create_session_factory, init_db, session_scope
@@ -393,6 +394,9 @@ class AppContext:
             self.realtime.registry.set_handler("notify_staff", self._notify_staff)
             self.realtime.registry.set_handler("get_visitor_request_status", self._visitor_status)
             self.realtime.registry.set_handler("robot_motion", self._robot_motion)
+            if isinstance(self.realtime, OpenAIGptLiveSession) and settings.camera_vision_enabled:
+                self.realtime.registry.set_handler("inspect_camera", self._inspect_camera)
+                self.realtime.vision_snapshot_provider = self._capture_model_view
 
         self.vad = VoiceActivityDetector(settings.vad_model_path, threshold=settings.vad_threshold)
         self.wakeword = WakeWordDetector(
@@ -789,6 +793,37 @@ class AppContext:
     def robot_motion_capabilities(self) -> dict:
         capabilities = getattr(self.robot, "motion_capabilities", None)
         return capabilities() if capabilities else {"ready": False, "axes": [], "dances": [], "emotions": []}
+
+    def _model_vision_allowed(self) -> bool:
+        return bool(
+            self.settings.camera_vision_enabled
+            and self.conversation.attended_chat_active
+            and self.state_machine.state == AppState.ENGAGED
+            and self.attention.enabled
+            and self.guard.is_engaged()
+            and self.realtime is not None
+            and self.realtime.running
+            and not self.realtime._input_suspended
+            and isinstance(self.camera, ReachyCameraAdapter)
+        )
+
+    async def _inspect_camera(self, arguments: dict, _call_id: str) -> dict:
+        if not self._model_vision_allowed():
+            return {"status": "unavailable", "reason": "start_attended_chat_or_finish_local_check"}
+        return {"status": "ready", "question": arguments["question"]}
+
+    async def _capture_model_view(self) -> ModelCameraView | None:
+        if not self._model_vision_allowed():
+            return None
+        motion = getattr(self.robot, "motion", None)
+        if motion is not None:
+            async with asyncio.timeout(4.5):
+                while motion.expression_diagnostics()["active"]:
+                    if not self._model_vision_allowed():
+                        return None
+                    await asyncio.sleep(0.05)
+        view = await asyncio.to_thread(capture_model_view, self.camera)
+        return view if self._model_vision_allowed() else None
 
     async def _robot_motion(self, arguments: dict, _call_id: str = "dashboard") -> dict:
         from app.services.reachy.motion.commands import RobotMotionRequest
