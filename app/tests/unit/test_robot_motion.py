@@ -151,9 +151,11 @@ async def test_one_motion_owner_handles_all_actuators_and_freeze_cancels_playbac
     motion.start()
     motion.set_mode(MotionMode.ENGAGED)
     end = Frame(create_head_pose(yaw=10), np.radians([20.0, -20.0]), np.radians(5))
-    sequence = MotionSequence([(0.0, Frame.neutral()), (0.5, end)], label="test")
+    sequence = MotionSequence([(0.0, Frame.neutral()), (5.0, end)], label="test")
     assert motion.play_expression(sequence)
-    await asyncio.sleep(0.12)
+    async with asyncio.timeout(3):
+        while len(writes) < 3:
+            await asyncio.sleep(0.01)
     assert motion.expression_diagnostics()["active"]
     pending_ticket = motion.reserve_expression()
     motion.stop_expression()
