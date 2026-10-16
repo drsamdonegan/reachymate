@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import time
 
 import numpy as np
 import pytest
@@ -311,5 +312,53 @@ async def test_user_transcript_does_not_send_realtime_cancel_or_truncate(setting
         )
         assert not any(e["type"] in {"response.cancel", "conversation.item.truncate"} for e in wire.sent)
         assert all("Actually" not in str(event) for event in session.telemetry.snapshot())
+    finally:
+        await session.stop()
+
+
+@pytest.mark.asyncio
+async def test_network_burst_and_timeline_pause_are_preserved_during_speech(settings):
+    session, _, playback, _ = session_fixture(settings)
+    await session.start()
+    try:
+        speech = np.full(3200, 500, dtype=np.int16).tobytes()
+        pause = bytes(6400)
+        # A 600 ms burst previously exceeded the 350 ms limit and cut speech.
+        await session.handle_server_event(audio(speech))
+        await session.handle_server_event(audio(pause))
+        await session.handle_server_event(audio(speech))
+        assert not playback.pushed  # The receiver never waits for the reserve.
+        await session._writer.queue.join()
+        assert [len(chunk) for chunk in playback.pushed] == [3200, 3200, 3200]
+        assert not np.any(playback.pushed[1])
+        assert session.diagnostics()["dropped_output_frames"] == 0
+        assert not any(
+            e["payload"].get("event") == "playback_backlog_discarded" for e in session.telemetry.snapshot()
+        )
+        # Even if the sink still reports queued silence as active, silence
+        # must eventually stop feeding itself and blocking local grammar.
+        session._last_output_speech_at = time.monotonic() - 1
+        playback.active = True
+        await session.handle_server_event(audio(pause))
+        assert session._writer.queue.empty() and not session._writer.busy
+        assert len(playback.pushed) == 3
+    finally:
+        await session.stop()
+
+
+@pytest.mark.asyncio
+async def test_attended_chat_pauses_idle_watchdog_but_not_max_session_age(settings):
+    session, _, _, _ = session_fixture(settings)
+    session.idle_timeout_paused = lambda: True
+    await session.start()
+    try:
+        session._last_activity = time.monotonic() - 100
+        await asyncio.sleep(1.1)
+        assert session.running
+        session._started_at = time.monotonic() - settings.realtime_max_session_seconds - 1
+        async with asyncio.timeout(3):
+            while session.running:
+                await asyncio.sleep(0.01)
+        assert session.diagnostics()["last_stop_reason"] == "max_session_age"
     finally:
         await session.stop()

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Reachy Office Bouncer</title>
-    <link rel="stylesheet" href="/static/style.css?v=20261017-movements" />
+    <link rel="stylesheet" href="/static/style.css?v=20261017-chat" />
   </head>
   <body>
     <div class="page">
@@ -34,10 +34,12 @@
             <h2>Reachy's View</h2>
             <div class="inline">
               <button id="start-voice-test">Start Voice Test</button>
+              <button id="stop-voice-test" disabled>Stop chat</button>
               <button id="simulate-attempt">Test Access Placeholder</button>
             </div>
           </div>
           <div id="voice-test-status" class="muted">Say “Hey Reachy” or start a voice test.</div>
+          <p id="voice-mode-notice" class="muted"></p>
           <div id="voice-audio-status" class="muted" aria-live="polite"></div>
           <img id="camera-feed" alt="Reachy camera feed" />
           <div id="camera-status" class="muted"></div>
@@ -156,6 +158,6 @@
       </section>
     </div>
 
-    <script src="/static/main.js?v=20261017-movements"></script>
+    <script src="/static/main.js?v=20261017-chat"></script>
   </body>
 </html>

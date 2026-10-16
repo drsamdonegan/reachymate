@@ -72,6 +72,14 @@ async function refreshVoice() {
       ? `Motion: ${movement.status}${movement.name ? ` · ${movement.name}` : ""} · ${movement.mode}`
       : "";
     const realtime = diagnostics.voice || diagnostics.realtime;
+    const conversation = diagnostics.conversation || {};
+    const attended = conversation.mode === "attended_chat";
+    document.querySelector("#start-voice-test").textContent = conversation.attended_available
+      ? "Start chat" : "Start Voice Test";
+    document.querySelector("#stop-voice-test").disabled = !realtime?.running;
+    document.querySelector("#voice-mode-notice").textContent = conversation.attended_available
+      ? `Start chat streams Reachy's microphone to OpenAI until Stop chat or ${Math.ceil(conversation.max_seconds / 60)} minutes. Looking around won't mute your conversation.`
+      : "";
     const status = document.querySelector("#voice-test-status");
     const audioStatus = document.querySelector("#voice-audio-status");
     audioStatus.textContent = realtime?.full_duplex
@@ -82,9 +90,11 @@ async function refreshVoice() {
     } else if (realtime.last_error) {
       status.textContent = `${realtime.api_label || "Voice"} error: ${realtime.last_error}`;
     } else if (!realtime.running) {
-      status.textContent = `${realtime.api_label || "Voice"} · ${realtime.model} · Say “Hey Reachy” or start a voice test.`;
+      status.textContent = `${realtime.api_label || "Voice"} · ${realtime.model} · ${conversation.attended_available ? "Click Start chat for continuous conversation." : "Say “Hey Reachy” or start a voice test."}`;
     } else {
-      const focus = diagnostics.attention?.face_present
+      const focus = attended
+        ? `Attended chat · microphone live · ${Math.ceil(conversation.remaining_seconds / 60)} min left`
+        : diagnostics.attention?.face_present
         ? "Face in view"
         : "Move into Reachy's camera view to speak";
       const mode = diagnostics.attention?.degraded_reason ? " · Uncalibrated bench demo" : "";
@@ -102,6 +112,7 @@ function addFeedEntry(text) {
   item.className = "feed-entry";
   item.textContent = text;
   telemetryFeed.prepend(item);
+  while (telemetryFeed.children.length > 200) telemetryFeed.lastElementChild.remove();
 }
 
 function connectTelemetry() {
@@ -226,6 +237,7 @@ document.querySelector("#start-voice-test").addEventListener("click", async (eve
   status.textContent = "Connecting to Roo…";
   try {
     const result = await fetchJson("/api/admin/test-conversation", { method: "POST" });
+    await refreshVoice();
     status.textContent = result.running
       ? `${result.api_label || "Voice"} connected. Speak normally, including while Roo talks.`
       : "Voice did not start.";
@@ -233,6 +245,17 @@ document.querySelector("#start-voice-test").addEventListener("click", async (eve
     status.textContent = `Voice test failed: ${String(error)}`;
   } finally {
     button.disabled = false;
+  }
+});
+
+document.querySelector("#stop-voice-test").addEventListener("click", async (event) => {
+  event.currentTarget.disabled = true;
+  try {
+    await fetchJson("/api/admin/conversation/stop", {method: "POST"});
+    await refreshVoice();
+  } catch (error) {
+    document.querySelector("#voice-test-status").textContent = `Could not stop chat: ${error.message}`;
+    event.currentTarget.disabled = false;
   }
 });
 

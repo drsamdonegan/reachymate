@@ -62,7 +62,10 @@ class Settings(BaseSettings):
     openai_live_model: str = "gpt-live-1"
     openai_live_backend_model: str = "gpt-6-luna"
     live_close_timeout_seconds: float = 5.0
-    live_max_output_buffer_seconds: float = 0.35
+    live_max_output_buffer_seconds: float = Field(default=1.0, ge=0.4, le=3.0)
+    live_playback_reserve_seconds: float = Field(default=0.2, ge=0, le=0.4)
+    attended_chat_enabled: bool = False
+    attended_chat_max_seconds: float = Field(default=600, ge=30, le=900)
     openai_api_key: SecretStr | None = None
     openai_realtime_url: str = "wss://api.openai.com/v1/realtime"
     openai_realtime_model: str = "gpt-realtime-2.1"
@@ -170,6 +173,15 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def restrict_uncalibrated_demo(self):
+        if self.attended_chat_enabled and (
+            self.app_env != RuntimeMode.STAGING
+            or not self.allow_dev_endpoints
+            or self.access_mode != "shadow"
+            or self.physical_unlock_enabled
+            or self.door_stage != 0
+            or self.voice_api != "gpt_live"
+        ):
+            raise ValueError("Attended chat requires the staging GPT-Live shadow profile")
         if self.uncalibrated_conversation_demo and (
             self.app_env != RuntimeMode.STAGING
             or self.access_mode != "shadow"

@@ -59,6 +59,7 @@ def main() -> None:
         os.environ["FRONTDESK_URL"] = "http://127.0.0.1:8092"
         os.environ["MLAI_BACKEND_URL"] = "http://127.0.0.1:8091"
         os.environ["UNCALIBRATED_CONVERSATION_DEMO"] = "true"
+        os.environ["ATTENDED_CHAT_ENABLED"] = "true"
     if shutil.disk_usage(Path.cwd()).free < 5 * 2**30:
         raise SystemExit("Live test requires at least 5 GiB free")
 

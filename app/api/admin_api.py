@@ -116,6 +116,11 @@ async def robot_motions(request: Request) -> dict[str, Any]:
     return get_ctx(request).robot_motion_capabilities()
 
 
+@router.post("/conversation/stop")
+async def stop_conversation(request: Request) -> dict[str, str]:
+    return await get_ctx(request).stop_voice_test()
+
+
 @router.post("/conversation/request")
 async def conversation_request(request: Request, payload: SpeechRequest) -> dict[str, str]:
     try:

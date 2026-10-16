@@ -73,6 +73,7 @@ def build_session_start(settings: Settings) -> dict:
 class OpenAIGptLiveSession(OpenAIRealtimeSession):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
+        self._writer.reserve_seconds = self.settings.live_playback_reserve_seconds
         self._input_resampler = soxr.ResampleStream(
             self.settings.sample_rate_hz, LIVE_AUDIO_RATE, 1, dtype="int16"
         )
@@ -97,6 +98,7 @@ class OpenAIGptLiveSession(OpenAIRealtimeSession):
         self._usage_seconds = 0.0
         self._finalization_confirmed = False
         self._output_guardrail_active = False
+        self._last_stop_reason: str | None = None
 
     def _emit(self, event: str, **fields) -> None:
         self.telemetry.publish("live", {"event": event, **fields})
@@ -135,6 +137,7 @@ class OpenAIGptLiveSession(OpenAIRealtimeSession):
         self._live_closed.clear()
         self._live_closing = False
         self._last_error = self._last_error_detail = None
+        self._last_stop_reason = None
         self._input_enabled = self._input_suspended = self._local_playback_active = False
         self._model_audio_blocked = self._output_guardrail_active = False
         self._server_input_muted = False
@@ -192,8 +195,10 @@ class OpenAIGptLiveSession(OpenAIRealtimeSession):
             if not self._running and self.connection is None and self._connection_context is None:
                 return
             self._live_closing = True
+            self._last_stop_reason = reason
             self._input_enabled = False
             self._generation += 1  # Late tool results belong to the old session.
+            await self._writer.clear()
             await self.tools.cancel_pending()
             if self.connection is not None and not self._live_closed.is_set():
                 try:
@@ -355,7 +360,8 @@ class OpenAIGptLiveSession(OpenAIRealtimeSession):
             raise ValueError("Malformed GPT-Live audio") from exc
         self._output_frames_received += len(pcm)
         if (
-            self._local_playback_active
+            self._live_closing
+            or self._local_playback_active
             or self._output_guardrail_active
             or self._model_audio_blocked
             and not self._controller_announcement
@@ -369,9 +375,11 @@ class OpenAIGptLiveSession(OpenAIRealtimeSession):
             if self.playback.output_sample_rate() == LIVE_AUDIO_RATE
             else self._output_resampler.resample_chunk(pcm, last=False)
         )
-        if not np.any(samples):
+        has_speech = bool(np.any(samples))
+        if not has_speech and not self._writer.busy and time.monotonic() - self._last_output_speech_at > 0.5:
             # Continuous zero output is timeline silence, not speech/activity.
-            # The hardware callback already supplies silence when no audio is queued.
+            # Do not use output_active here: queued silence can otherwise keep
+            # itself alive indefinitely. The hardware supplies idle silence.
             return
         rate = self.playback.output_sample_rate()
         buffered = self._writer.queued_frames + getattr(self.playback, "output_buffered_frames", lambda: 0)()
@@ -379,9 +387,10 @@ class OpenAIGptLiveSession(OpenAIRealtimeSession):
             self._dropped_output_frames += buffered
             await self._writer.clear()
             self._emit("playback_backlog_discarded", frames=buffered)
-        self._last_output_speech_at = time.monotonic()
-        self._output_started.set()
-        self.touch_activity()
+        if has_speech:
+            self._last_output_speech_at = time.monotonic()
+            self._output_started.set()
+            self.touch_activity()
         if not self._writer.enqueue(None, samples.astype(np.float32) / 32768):
             self._dropped_output_frames += len(samples)
             await self._writer.clear()
@@ -581,6 +590,12 @@ class OpenAIGptLiveSession(OpenAIRealtimeSession):
             "simultaneous_input_output_frames": self._duplex_input_frames,
             "dropped_output_frames": self._dropped_output_frames,
             "last_error": self._last_error,
+            "last_stop_reason": self._last_stop_reason,
+            "playback_buffer_ms": round(
+                1000
+                * (self._writer.queued_frames + getattr(self.playback, "output_buffered_frames", lambda: 0)())
+                / max(1, self.playback.output_sample_rate())
+            ),
             "last_error_detail": self._last_error_detail,
             "cloud_disabled": time.monotonic() < self._cloud_disabled_until,
             "server_input_muted": self._server_input_muted,

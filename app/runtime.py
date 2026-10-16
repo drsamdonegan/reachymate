@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from app.config import Settings
 from app.models.domain import FaceMatchResult
-from app.models.enums import AppState, HealthStatus
+from app.models.enums import AppState, CommandIntent, HealthStatus
 from app.services.audio.asr import CommandRecognizer
 from app.services.audio.audio_router import AudioRouter
 from app.services.audio.barge_in_guard import BargeInGuard
@@ -388,6 +388,7 @@ class AppContext:
         )
         if self.realtime is not None:
             self.realtime.on_closed = self.conversation.on_realtime_closed
+            self.realtime.idle_timeout_paused = lambda: self.conversation.attended_chat_active
             self.realtime.registry.set_handler("route_visitor", self._route_visitor)
             self.realtime.registry.set_handler("notify_staff", self._notify_staff)
             self.realtime.registry.set_handler("get_visitor_request_status", self._visitor_status)
@@ -430,6 +431,7 @@ class AppContext:
             doa_supplier=self.doa.latest if self.doa else lambda: None,
             on_activity=self.conversation.gated_activity,
             on_track_changed=self.conversation.update_engaged_track,
+            attended_chat_supplier=lambda: self.conversation.attended_chat_active,
             on_fault=self._hardware_fault,
             on_barge_in=self.realtime.cancel_response
             if self.realtime and settings.local_barge_in_enabled and settings.voice_api == "realtime"
@@ -734,8 +736,12 @@ class AppContext:
 
         if self.realtime is None:
             raise RuntimeError("OpenAI voice is not enabled")
-        await self.conversation.handle_wake()
+        await self.conversation.handle_wake(attended=self.settings.attended_chat_enabled)
         return self.realtime.diagnostics()
+
+    async def stop_voice_test(self) -> dict[str, str]:
+        await self.conversation.handle_command(CommandIntent.CANCEL)
+        return {"status": "stopped"}
 
     async def send_voice_request(self, text: str) -> dict[str, str]:
         if self.realtime is None or not self.realtime.running or self.realtime._input_suspended:
@@ -755,6 +761,7 @@ class AppContext:
 
     def audio_diagnostics(self) -> dict[str, Any]:
         diagnostics = self.audio_router.diagnostics()
+        diagnostics["conversation"] = self.conversation.diagnostics()
         if self.reachy_media is not None:
             diagnostics["reachy_media"] = self.reachy_media.diagnostics()
         if self.realtime is not None:

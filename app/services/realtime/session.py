@@ -147,6 +147,7 @@ class OpenAIRealtimeSession:
         self._last_error_detail: dict[str, str] | None = None
         self._configured = asyncio.Event()
         self._greeting_pending = False
+        self.idle_timeout_paused = lambda: False
         self._writer = PlaybackWriter(
             playback, max_chunks=getattr(settings, "realtime_output_queue_chunks", 64)
         )
@@ -624,7 +625,10 @@ class OpenAIRealtimeSession:
             now = time.monotonic()
             if self._reconnecting:
                 continue
-            if now - self._last_activity >= self.settings.realtime_idle_timeout_seconds:
+            if (
+                not self.idle_timeout_paused()
+                and now - self._last_activity >= self.settings.realtime_idle_timeout_seconds
+            ):
                 await self.stop(reason="idle_timeout")
                 return
             if now - self._started_at >= self.settings.realtime_max_session_seconds:

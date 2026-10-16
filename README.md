@@ -35,6 +35,8 @@ The demo profile uses loopback front-desk/bookings mocks and forces shadow mode.
 
 The launcher selects `VOICE_API=gpt_live` and `TTS_ENGINE=live`. Cloud voice still uses the existing `REALTIME_ENABLED` enable switch and `REALTIME_SAFETY_IDENTIFIER_KEY` secret. The previous Realtime transport remains explicitly selectable with `VOICE_API=realtime`; connection failures do not switch APIs automatically. See [GPT-Live transport](docs/gpt-live.md) for configuration, lifecycle and diagnostics.
 
+For uninterrupted bench conversation, click **Start chat**. The staging demo streams Reachy's microphone continuously for up to ten minutes, including while he looks away or dances. **Stop chat** ends it immediately. Wake-word concierge sessions continue to use the face/audio gate; local biometric consent remains gated in both modes. The dashboard shows the active mode and remaining time.
+
 The same dashboard includes look, gesture, dance, expression and numeric pose controls. Voice requests use `robot_motion` for all six head coordinates, body yaw and both antennas, plus 19 pinned Pollen dances and 85 expressions. A single motion thread applies reachability, relative-yaw, duration and speed limits. Recordings reduce amplitude when necessary; numeric pose requests are rejected if unreachable. Stop cancels playback; parking, consent/capture freeze and engagement end cancel manual movements. Recorded motion does not play its sound sidecars over the conversation. On macOS the camera selector matches OpenCV's unique-ID ordering and shows the selected Reachy camera name in the preview.
 
 ## Verification

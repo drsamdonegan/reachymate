@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 import numpy as np
 
 
 class PlaybackWriter:
-    def __init__(self, sink: Any, *, max_chunks: int = 64) -> None:
+    def __init__(self, sink: Any, *, max_chunks: int = 64, reserve_seconds: float = 0.0) -> None:
         self.sink = sink
         self.queue: asyncio.Queue[tuple[str | None, np.ndarray]] = asyncio.Queue(maxsize=max_chunks)
         self.interrupted: set[str] = set()
@@ -17,6 +18,8 @@ class PlaybackWriter:
         self._clear_lock = asyncio.Lock()
         self._busy = False
         self.queued_frames = 0
+        self.reserve_seconds = reserve_seconds
+        self._last_push_at = 0.0
 
     @property
     def busy(self) -> bool:
@@ -51,6 +54,7 @@ class PlaybackWriter:
                 self.queued_frames -= len(samples)
                 self.queue.task_done()
             await self.sink.clear_output()
+            self._last_push_at = 0.0
 
     async def stop(self) -> None:
         await self.clear()
@@ -67,7 +71,12 @@ class PlaybackWriter:
             self._busy = True
             try:
                 if item_id not in self.interrupted:
+                    # Build a small reserve at speech onset. Keep the network
+                    # receiver free to collect bursts while the writer waits.
+                    if self.reserve_seconds and time.monotonic() - self._last_push_at > 0.5:
+                        await asyncio.sleep(self.reserve_seconds)
                     await self.sink.push_audio(samples)
+                    self._last_push_at = time.monotonic()
             finally:
                 self._busy = False
                 self.queued_frames -= len(samples)

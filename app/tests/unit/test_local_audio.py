@@ -99,6 +99,45 @@ class CountingCommand:
         return CommandIntent.OPEN_DOOR
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attended", [True, False])
+async def test_attended_audio_has_no_camera_gaps_but_local_commands_stay_gated(settings, attended):
+    guard = BargeInGuard(0)
+    guard.begin_engagement(10)
+    recognizer = CountingCommand()
+    forwarded = []
+    got_audio = asyncio.Event()
+
+    def receive(chunk):
+        forwarded.append(chunk)
+        got_audio.set()
+        return True
+
+    router = AudioRouter(
+        settings=settings,
+        microphone=OneChunkMicrophone(),
+        vad=FixedScore(1),
+        wakeword=FixedScore(0),
+        asr=recognizer,
+        guard=guard,
+        telemetry=TelemetryBroker(),
+        robot_is_speaking=lambda: False,
+        face_present_supplier=lambda: False,
+        on_wake=lambda: asyncio.sleep(0),
+        on_command=lambda _: asyncio.sleep(0),
+        on_engaged_audio=receive,
+        attended_chat_supplier=lambda: attended,
+    )
+    await router.start()
+    try:
+        await asyncio.wait_for(got_audio.wait(), 2)
+        assert forwarded == [b"wake" if attended else bytes(4)]
+        assert recognizer.calls == 0
+        assert router.diagnostics()["gate_reason"] == ("attended_chat" if attended else "no_engaged_face")
+    finally:
+        await router.stop()
+
+
 class ContinuousSpeechVadModel:
     def __init__(self) -> None:
         self.reset_calls = 0
