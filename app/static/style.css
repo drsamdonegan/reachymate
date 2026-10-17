@@ -98,13 +98,19 @@ button:hover {
   opacity: 0.92;
 }
 
-input {
+input, select {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 12px 14px;
   background: white;
 }
+
+.inline.wrap { flex-wrap: wrap; justify-content: flex-start; }
+.inline select { flex: 1; min-width: 150px; }
+button.danger { background: var(--danger); }
+details { margin: 18px 0; }
+summary { cursor: pointer; font-weight: 600; }
 
 #camera-feed {
   width: 100%;

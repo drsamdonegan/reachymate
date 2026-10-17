@@ -21,7 +21,9 @@ LIVE_TEST_DEFAULTS = {
     "REACHY_MEDIA_BACKEND": "lite_direct",
     "REACHY_CAMERA_DEVICE_INDEX": "1",
     "REALTIME_ENABLED": "true",
-    "TTS_ENGINE": "realtime",
+    "VOICE_API": "gpt_live",
+    "TTS_ENGINE": "live",
+    "OPENAI_LIVE_MODEL": "gpt-live-1",
     "OPENAI_REALTIME_MODEL": "gpt-realtime-2.1",
 }
 
@@ -40,11 +42,16 @@ def main() -> None:
         "--demo", action="store_true", help="Use loopback mock bookings and front desk; still shadow only"
     )
     parser.add_argument(
+        "--auto-chat", action="store_true", help="With --demo, start attended chat when the dashboard opens"
+    )
+    parser.add_argument(
         "--no-daemon-check",
         action="store_true",
         help="Start even when the local Reachy daemon port is not reachable.",
     )
     args = parser.parse_args()
+    if args.auto_chat and not args.demo:
+        parser.error("--auto-chat requires --demo")
 
     for key, value in LIVE_TEST_DEFAULTS.items():
         os.environ.setdefault(key, value)
@@ -56,6 +63,11 @@ def main() -> None:
     if args.demo:
         os.environ["FRONTDESK_URL"] = "http://127.0.0.1:8092"
         os.environ["MLAI_BACKEND_URL"] = "http://127.0.0.1:8091"
+        os.environ["UNCALIBRATED_CONVERSATION_DEMO"] = "true"
+        os.environ["ATTENDED_CHAT_ENABLED"] = "true"
+        os.environ["CAMERA_VISION_ENABLED"] = "true"
+    if args.auto_chat:
+        os.environ["DASHBOARD_AUTO_CHAT"] = "true"
     if shutil.disk_usage(Path.cwd()).free < 5 * 2**30:
         raise SystemExit("Live test requires at least 5 GiB free")
 
@@ -98,10 +110,13 @@ def main() -> None:
 
     from app.main import create_app
 
-    print("Reachy live test: say 'Hey Reachy', then speak normally.")
+    api_label = "GPT-Live" if settings.voice_api == "gpt_live" else "Realtime"
+    print(f"Reachy {api_label} voice test ({settings.voice_model}): say 'Hey Reachy', then speak normally.")
     print(f"Local diagnostics: http://{settings.host}:{settings.port}")
     print("Door action: placeholder only; no hardware actuation is possible.")
-    uvicorn.run(create_app(settings), host=settings.host, port=settings.port)
+    if settings.uncalibrated_conversation_demo and not settings.camera_calibration_path:
+        print("Attention: vendor intrinsics for conversation only; field calibration remains pending.")
+    uvicorn.run(create_app(settings), host=settings.host, port=settings.port, timeout_graceful_shutdown=5)
 
 
 if __name__ == "__main__":

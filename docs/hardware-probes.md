@@ -21,6 +21,6 @@ Two probes change hardware state and must be attended:
 
 Factory is the default XVF profile. Alternative profiles apply verified volatile writes. No code calls `SAVE_CONFIGURATION`.
 
-Camera calibration output stays `validated: false` until the operator performs the tape test at 0°, ±15°, ±30° and ±35° and proves the plan's ±5° error bound at ±30°. Keep the measured `K`, `D`, `width`, and `height`; record the tape evidence before marking that local calibration validated. The runtime refuses to derive an engaged track from missing or unvalidated calibration. A matching calibration derives `W_zone = fx × 0.15 / 1.5` and `W_crop = fx × 0.15 / 1.1`.
+Camera calibration output stays `validated: false` until the operator performs the tape test at 0°, ±15°, ±30° and ±35° and proves the plan's ±5° error bound at ±30°. Keep the measured `K`, `D`, `width`, and `height`; record the tape evidence before marking that local calibration validated. Normal profiles refuse to derive an engaged track from missing or unvalidated calibration. The explicit staging shadow `--demo` profile can use SDK intrinsics for detection-only conversation, marked degraded and without face-directed motion; it cannot validate calibration, DoA accuracy or biometric readiness. A matching calibration derives `W_zone = fx × 0.15 / 1.5` and `W_crop = fx × 0.15 / 1.1`.
 
 DoA mechanics and directional accuracy are distinct. Passing the concurrent mechanics probe does not set `DOA_BEARING_VALIDATED`. The labelled attended survey remains necessary.

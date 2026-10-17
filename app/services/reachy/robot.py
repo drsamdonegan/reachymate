@@ -6,6 +6,7 @@ import asyncio
 import logging
 import shutil
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any, Protocol
 
 from app.config import Settings
@@ -104,6 +105,7 @@ class ReachyRobotAdapter(SimulatedRobotAdapter):
         self.daemon = None
         self.wobbler = None
         self.calibration = None
+        self.movement_library = None
         self._realtime_speech: Callable[[str], Awaitable[None]] | None = None
 
     def set_realtime_speech(self, speak: Callable[[str], Awaitable[None]]) -> None:
@@ -122,8 +124,15 @@ class ReachyRobotAdapter(SimulatedRobotAdapter):
 
         self.daemon = DaemonClient(self.settings.reachy_host, self.settings.reachy_port)
         self.motion = MotionManager(self._reachy)
+        from app.services.reachy.motion.expressions import MotionLibrary
+
+        self.movement_library = MotionLibrary(Path(self.settings.motion_assets_dir))
         self.motion.start()
-        self.power = RobotPowerManager(self.motion, self.daemon)
+        self.power = RobotPowerManager(
+            self.motion,
+            self.daemon,
+            joint_sag_limit=0.18 if self.settings.uncalibrated_conversation_demo else 0.10,
+        )
         path = getattr(self.settings, "camera_calibration_path", None)
         if path:
             self.calibration = CameraCalibration.load(path)
@@ -155,6 +164,89 @@ class ReachyRobotAdapter(SimulatedRobotAdapter):
             return
         pose = await self.motion.execute(self._face_target, bbox)
         self.motion.set_tracking_target(pose)
+
+    def motion_capabilities(self) -> dict:
+        if self.movement_library is None:
+            return {"ready": False, "axes": [], "dances": [], "emotions": []}
+        return {
+            "ready": self.motion is not None and self._reachy is not None,
+            **self.movement_library.capabilities(),
+            "motion": self.motion.expression_diagnostics() if self.motion else {},
+        }
+
+    async def perform_motion(self, request) -> dict:
+        from app.services.reachy.motion.expressions import reachable_joints, safe_frame
+        from app.services.reachy.motion.manager import MotionMode
+
+        if request.action == "capabilities":
+            return {"status": "available", **self.motion_capabilities()}
+        if self.motion is None or self.movement_library is None:
+            return {"status": "unavailable"}
+        if request.action == "stop":
+            self.motion.stop_expression()
+            self.telemetry.publish("robot_motion", {"event": "stopped"})
+            return {"status": "stopped"}
+        if self.motion.mode != MotionMode.ENGAGED or self.power.parked or self.power.parking:
+            return {"status": "blocked", "reason": "robot_not_engaged"}
+        generation = self.motion.reserve_expression()
+        if generation is None:
+            return {"status": "blocked", "reason": "robot_busy_or_frozen"}
+        try:
+            start = self.motion.frame()
+
+            def prepare():
+                import numpy as np
+                from reachy_mini.kinematics.analytical_kinematics import AnalyticalKinematics
+
+                sequence = self.movement_library.sequence(request, start)
+                kinematics = AnalyticalKinematics(automatic_body_yaw=False)
+                scales = [1.0, 0.9, 0.75, 0.6, 0.4, 0.2] if request.action in {"dance", "emotion"} else [1.0]
+                for amplitude in scales:
+                    candidate = sequence if amplitude == 1.0 else sequence.scaled(amplitude)
+                    reachable = True
+                    frames = [raw for _, raw in candidate.frames]
+                    if request.action not in {"dance", "emotion"}:
+                        frames += [
+                            candidate.evaluate(float(t)) for t in np.arange(0, candidate.duration, 0.05)
+                        ]
+                    else:
+                        frames += [candidate.evaluate(float(t)) for t in np.arange(0, 0.6, 0.05)]
+                        frames += [
+                            candidate.evaluate(float(t))
+                            for t in np.arange(candidate.duration - 0.8, candidate.duration, 0.05)
+                        ]
+                    for raw in frames:
+                        try:
+                            frame = safe_frame(raw, raw, 0.02)
+                        except ValueError:
+                            reachable = False
+                            break
+                        joints = kinematics.ik(frame.head, body_yaw=frame.body)
+                        if not reachable_joints(joints):
+                            reachable = False
+                            break
+                    if reachable:
+                        return candidate
+                raise ValueError("Requested pose is not reachable; try a smaller movement")
+
+            # Validation is CPU-only SDK math. Keep it off the live audio loop.
+            # Stop/freeze/new requests revoke the ticket while this work runs.
+            sequence = await asyncio.to_thread(prepare)
+            if not self.motion.play_expression(sequence, generation=generation):
+                return {"status": "blocked", "reason": "robot_busy_or_frozen"}
+        except (ValueError, KeyError) as exc:
+            return {"status": "unavailable", "reason": str(exc)[:200]}
+        self.telemetry.publish(
+            "robot_motion",
+            {"event": "started", "name": sequence.label, "duration_seconds": sequence.duration},
+        )
+        return {
+            "status": "started",
+            "movement": sequence.label,
+            "duration_seconds": sequence.duration,
+            "amplitude_scale": sequence.amplitude_scale,
+            "say_hint": "The movement has started; it can be stopped with robot_motion action stop.",
+        }
 
     def _face_target(self, bbox):
         import numpy as np
@@ -233,9 +325,9 @@ class ReachyRobotAdapter(SimulatedRobotAdapter):
             await process.wait()
             return
 
-        if self.settings.tts_engine == "realtime":
+        if self.settings.tts_engine in {"realtime", "live"}:
             if self._realtime_speech is None:
-                raise RuntimeError("Realtime speech is not connected to the robot adapter")
+                raise RuntimeError("OpenAI voice is not connected to the robot adapter")
             owner = getattr(self._realtime_speech, "__self__", None)
             if owner is not None and not getattr(owner, "running", False):
                 self.telemetry.publish("speech", {"event": "speech_skipped", "reason": "no_realtime_session"})

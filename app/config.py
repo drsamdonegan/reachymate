@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.models.enums import RuntimeMode
@@ -53,8 +54,20 @@ class Settings(BaseSettings):
     wakeword_vosk_fallback_enabled: bool = False
     vosk_model_path: str = str(BASE_DIR / "data" / "models" / "vosk-en")
     tts_engine: str = "simulation"
+    motion_assets_dir: str = str(BASE_DIR / "data" / "movements")
 
     realtime_enabled: bool = False
+    voice_api: Literal["gpt_live", "realtime"] = "gpt_live"
+    openai_live_url: str = "wss://api.openai.com/v1/live/sessions"
+    openai_live_model: str = "gpt-live-1"
+    openai_live_backend_model: str = "gpt-6-luna"
+    live_close_timeout_seconds: float = 5.0
+    live_max_output_buffer_seconds: float = Field(default=1.0, ge=0.4, le=3.0)
+    live_playback_reserve_seconds: float = Field(default=0.2, ge=0, le=0.4)
+    attended_chat_enabled: bool = False
+    dashboard_auto_chat: bool = False
+    camera_vision_enabled: bool = False
+    attended_chat_max_seconds: float = Field(default=600, ge=30, le=900)
     openai_api_key: SecretStr | None = None
     openai_realtime_url: str = "wss://api.openai.com/v1/realtime"
     openai_realtime_model: str = "gpt-realtime-2.1"
@@ -131,6 +144,7 @@ class Settings(BaseSettings):
     reachy_camera_name: str = "Reachy Mini Camera"
     reachy_camera_unique_id: str | None = None
     camera_calibration_path: str | None = None
+    uncalibrated_conversation_demo: bool = False
     xvf_profile: str = "factory"
     doa_bearing_validated: bool = False
     av_gate_mode: str = "demo"
@@ -159,6 +173,32 @@ class Settings(BaseSettings):
     data_dir: Path = Field(default_factory=lambda: BASE_DIR / "data")
     static_dir: Path = Field(default_factory=lambda: BASE_DIR / "app" / "static")
 
+    @model_validator(mode="after")
+    def restrict_uncalibrated_demo(self):
+        if self.dashboard_auto_chat and not self.attended_chat_enabled:
+            raise ValueError("Dashboard auto chat requires attended chat")
+        if self.camera_vision_enabled and not self.attended_chat_enabled:
+            raise ValueError("Model camera vision requires attended chat")
+        if self.attended_chat_enabled and (
+            self.app_env != RuntimeMode.STAGING
+            or not self.allow_dev_endpoints
+            or self.access_mode != "shadow"
+            or self.physical_unlock_enabled
+            or self.door_stage != 0
+            or self.voice_api != "gpt_live"
+        ):
+            raise ValueError("Attended chat requires the staging GPT-Live shadow profile")
+        if self.uncalibrated_conversation_demo and (
+            self.app_env != RuntimeMode.STAGING
+            or self.access_mode != "shadow"
+            or self.physical_unlock_enabled
+            or self.door_stage != 0
+            or self.av_gate_mode != "demo"
+            or self.doa_bearing_validated
+        ):
+            raise ValueError("Uncalibrated conversation requires the staging shadow demo profile")
+        return self
+
     @property
     def is_sqlite(self) -> bool:
         return self.db_url.startswith("sqlite")
@@ -166,6 +206,10 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env == RuntimeMode.PRODUCTION
+
+    @property
+    def voice_model(self) -> str:
+        return self.openai_live_model if self.voice_api == "gpt_live" else self.openai_realtime_model
 
     @property
     def dev_endpoints_enabled(self) -> bool:

@@ -112,7 +112,7 @@ def test_session_update_uses_current_realtime_21_shape(settings) -> None:
     }
     assert session["audio"]["output"]["format"] == {"type": "audio/pcm", "rate": 24000}
     assert session["reasoning"] == {"effort": "low"}
-    assert len(session["tools"]) == 7
+    assert len(session["tools"]) == 8
     assert session["tools"][0]["name"] == "search_public_knowledge"
     assert "tracing" not in session
 

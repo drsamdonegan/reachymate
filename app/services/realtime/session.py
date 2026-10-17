@@ -147,6 +147,7 @@ class OpenAIRealtimeSession:
         self._last_error_detail: dict[str, str] | None = None
         self._configured = asyncio.Event()
         self._greeting_pending = False
+        self.idle_timeout_paused = lambda: False
         self._writer = PlaybackWriter(
             playback, max_chunks=getattr(settings, "realtime_output_queue_chunks", 64)
         )
@@ -314,6 +315,10 @@ class OpenAIRealtimeSession:
         if converted.size == 0:
             return True
         payload = converted.astype(np.int16, copy=False).tobytes()
+        if not np.any(source):
+            # PCM resamplers may add one-bit dither even to exact silence.
+            # A closed visitor gate must remain exact silence on the wire.
+            payload = bytes(len(payload))
         if self._input_queue.full():
             try:
                 self._input_queue.get_nowait()
@@ -571,6 +576,8 @@ class OpenAIRealtimeSession:
 
     def diagnostics(self) -> dict[str, Any]:
         return {
+            "api": "realtime",
+            "api_label": "Realtime",
             "running": self._running,
             "input_enabled": self._input_enabled,
             "model": self.settings.openai_realtime_model,
@@ -618,7 +625,10 @@ class OpenAIRealtimeSession:
             now = time.monotonic()
             if self._reconnecting:
                 continue
-            if now - self._last_activity >= self.settings.realtime_idle_timeout_seconds:
+            if (
+                not self.idle_timeout_paused()
+                and now - self._last_activity >= self.settings.realtime_idle_timeout_seconds
+            ):
                 await self.stop(reason="idle_timeout")
                 return
             if now - self._started_at >= self.settings.realtime_max_session_seconds:

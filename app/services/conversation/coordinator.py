@@ -68,18 +68,44 @@ class ConversationCoordinator:
         self._pending_track_ref: str | None = None
         self._track_changed_at: float | None = None
         self._track_lost_at: float | None = None
+        self._attended_until = 0.0
         if realtime is not None:
             realtime.on_activity = self.gated_activity
             realtime.tools.set_handler("request_access_check", self._tool_access_request)
             realtime.tools.set_handler("end_conversation", self._tool_end_conversation)
 
-    async def handle_wake(self) -> None:
+    @property
+    def attended_chat_active(self) -> bool:
+        return self._engaged and time.monotonic() < self._attended_until
+
+    def diagnostics(self) -> dict[str, Any]:
+        return {
+            "attended_available": self.settings.attended_chat_enabled,
+            "dashboard_auto_start": self.settings.dashboard_auto_chat,
+            "max_seconds": self.settings.attended_chat_max_seconds,
+            "mode": "attended_chat" if self.attended_chat_active else "concierge",
+            "remaining_seconds": round(max(0, self._attended_until - time.monotonic()))
+            if self.attended_chat_active
+            else 0,
+        }
+
+    async def handle_wake(self, *, attended: bool = False) -> None:
         async with self._wake_lock:
             if getattr(self.state_machine, "state", None) == AppState.SAFE_HOLD:
                 return
+            if attended and not self.settings.attended_chat_enabled:
+                raise RuntimeError("Attended chat is unavailable in this profile")
             if self._engaged:
-                self.gated_activity()
-                return
+                if not attended or self.realtime is None or self.realtime.running:
+                    if attended:
+                        self._attended_until = time.monotonic() + self.settings.attended_chat_max_seconds
+                        self._track_lost_at = self._track_changed_at = None
+                    self.gated_activity()
+                    return
+                await self._end_visitor(reason="operator_restart")
+            self._attended_until = (
+                time.monotonic() + self.settings.attended_chat_max_seconds if attended else 0.0
+            )
             self.session_ref = str(uuid4())
             self._consent_requested = False
             self._routed = False
@@ -87,6 +113,7 @@ class ConversationCoordinator:
             self._track_ref = self._pending_track_ref = None
             self._track_changed_at = self._track_lost_at = None
             self._ending = False
+            self._local_only_until = 0.0
             self._engaged = True
             self.gated_activity()
             await self.state_machine.transition(AppState.ENGAGED)
@@ -102,13 +129,13 @@ class ConversationCoordinator:
                     await asyncio.gather(*tasks)
                 if self.realtime is not None:
                     self.system_health.set_status(
-                        "realtime", HealthStatus.HEALTHY, {"model": self.settings.openai_realtime_model}
+                        "realtime", HealthStatus.HEALTHY, {"model": self.settings.voice_model}
                     )
                     await self.realtime.greet()
                 else:
                     self._local_only_until = time.monotonic() + 20
             except Exception as exc:
-                logger.warning("Realtime engagement failed: %s", type(exc).__name__)
+                logger.warning("OpenAI voice engagement failed: %s", type(exc).__name__)
                 self.system_health.set_status("realtime", HealthStatus.ERROR, {"error": type(exc).__name__})
                 self._local_only_until = time.monotonic() + 20
                 self.gated_activity()
@@ -127,6 +154,8 @@ class ConversationCoordinator:
     def update_engaged_track(self, track_ref: str | None) -> None:
         """Close visitor context when the attention tracker loses or replaces them."""
 
+        if self.attended_chat_active:
+            return
         now = time.monotonic()
         if track_ref is None:
             if self._track_ref is not None and self._track_lost_at is None:
@@ -212,6 +241,7 @@ class ConversationCoordinator:
     async def stop(self) -> None:
         self._ending = True
         self._engaged = False
+        self._attended_until = 0.0
         current = asyncio.current_task()
         tasks = tuple(
             task
@@ -246,6 +276,7 @@ class ConversationCoordinator:
         await self._finish_consent()
 
     async def on_realtime_closed(self) -> None:
+        self._attended_until = 0.0
         if self._ending or not self._engaged:
             self.guard.end_engagement()
             return
@@ -300,8 +331,12 @@ class ConversationCoordinator:
         while self._engaged:
             await asyncio.sleep(0.25)
             now = time.monotonic()
-            if (self._track_changed_at is not None and now - self._track_changed_at >= 1.5) or (
-                self._track_lost_at is not None and now - self._track_lost_at >= 8
+            if self._attended_until and now >= self._attended_until:
+                await self._end_visitor(reason="attended_chat_expired")
+                return
+            if not self.attended_chat_active and (
+                (self._track_changed_at is not None and now - self._track_changed_at >= 1.5)
+                or (self._track_lost_at is not None and now - self._track_lost_at >= 8)
             ):
                 await self._end_visitor(reason="visitor_left")
                 return
@@ -323,18 +358,21 @@ class ConversationCoordinator:
                 await self._end_visitor(reason="local_grammar_window_expired")
                 return
             limit = getattr(self.settings, "engagement_silence_seconds", 20.0)
-            if now - self._last_activity >= limit:
+            if self.attended_chat_active:
+                self.guard.begin_engagement(2)
+            elif now - self._last_activity >= limit:
                 await self._end_visitor(reason="visitor_silent")
                 return
 
     async def _end_visitor(self, *, reason: str) -> None:
         self._ending = True
         self._engaged = False
+        self._attended_until = 0.0
         self._consent_deadline = None
         current = asyncio.current_task()
         tasks = tuple(
             task
-            for task in (self._access_task, self._notice_task)
+            for task in (self._access_task, self._notice_task, self._heartbeat_task)
             if task is not None and task is not current
         )
         for task in tasks:

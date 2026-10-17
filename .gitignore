@@ -13,6 +13,13 @@ env/
 # Environment variables
 .env
 .codex-runtime-logs/
+# Site-specific planning, security research and measured evidence stay private.
+research_notes/
+reports/
+docs/plans/
+docs/evidence/
+docs/hardware-baseline.md
+docs/production-readiness-audit.md
 data/face_db/
 data/voices/
 data/eval/
@@ -58,6 +65,7 @@ data/*.sqlite
 data/*.sqlite3
 data/*.db-*
 data/models/
+data/movements/
 
 # macOS
 .DS_Store

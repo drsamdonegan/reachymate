@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+
+from app.services.reachy.motion.commands import RobotMotionRequest
 
 router = APIRouter(prefix="/api/admin")
 
@@ -70,7 +73,7 @@ async def audio_diagnostics(request: Request) -> dict[str, Any]:
 
 @router.get("/diagnostics/camera")
 async def camera_diagnostics(request: Request) -> dict[str, Any]:
-    return get_ctx(request).camera_diagnostics()
+    return await asyncio.to_thread(get_ctx(request).camera_diagnostics)
 
 
 @router.get("/diagnostics/telemetry")
@@ -106,6 +109,29 @@ async def test_conversation(request: Request) -> dict[str, Any]:
         return await get_ctx(request).start_voice_test()
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/robot/motions")
+async def robot_motions(request: Request) -> dict[str, Any]:
+    return get_ctx(request).robot_motion_capabilities()
+
+
+@router.post("/conversation/stop")
+async def stop_conversation(request: Request) -> dict[str, str]:
+    return await get_ctx(request).stop_voice_test()
+
+
+@router.post("/conversation/request")
+async def conversation_request(request: Request, payload: SpeechRequest) -> dict[str, str]:
+    try:
+        return await get_ctx(request).send_voice_request(payload.text)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/robot/motion")
+async def robot_motion(request: Request, payload: RobotMotionRequest) -> dict[str, Any]:
+    return await get_ctx(request)._robot_motion(payload.model_dump(exclude_none=True))
 
 
 @router.post("/simulate/attempt")

@@ -64,13 +64,15 @@ class DaemonSupervisor:
                 return
             self._down_since = None
             if not self.motion.in_flight:
-                result = await self.motion.execute(self.daemon.probe_target, self.motion.target.copy())
+                frame = getattr(self.motion, "frame", None)
+                target = frame().head if frame else self.motion.target.copy()
+                result = await self.motion.execute(self.daemon.probe_target, target)
                 if result.get("reason") == "move_running":
                     self._stuck_since = self._stuck_since or now
                     if now - self._stuck_since >= 5:
                         await asyncio.to_thread(stop_move, self.motion.mini)
                         result = await self.motion.execute(
-                            self.daemon.probe_target, self.motion.target.copy()
+                            self.daemon.probe_target, target
                         )
                         if result.get("reason") == "move_running":
                             await self._restart()

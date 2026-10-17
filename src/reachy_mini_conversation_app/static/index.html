@@ -100,53 +100,6 @@
         </div>
       </div>
 
-      <!-- ===== Doctor Mode ===== -->
-      <div id="doctor-panel" class="panel hidden">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow">Game</p>
-            <h2>Doctor Mode</h2>
-          </div>
-          <span id="doctor-badge" class="chip">Off</span>
-        </div>
-        <p class="muted">Select a clinical case. Reachy becomes the patient -- ask questions, order tests, and guess the diagnosis.</p>
-        <div class="section">
-          <div class="section-heading">
-            <h3>Select case</h3>
-          </div>
-          <div class="row">
-            <label for="doctor-case-select">Case</label>
-            <select id="doctor-case-select"></select>
-          </div>
-          <div class="actions" style="margin-top:10px">
-            <button id="doctor-start" class="ghost">Start case</button>
-            <button id="doctor-stop" class="ghost" disabled>Stop</button>
-            <span id="doctor-status" class="status"></span>
-          </div>
-        </div>
-        <div id="doctor-active-section" class="section hidden">
-          <div class="section-heading">
-            <h3 id="doctor-case-title"></h3>
-            <span id="doctor-difficulty" class="chip"></span>
-          </div>
-          <div id="doctor-patient-img-wrap" class="doctor-patient-img-wrap hidden">
-            <img id="doctor-patient-img" class="doctor-patient-img" alt="Patient" />
-          </div>
-          <div id="doctor-ed-look" class="doctor-ed-look"></div>
-          <details class="doctor-complaint-details">
-            <summary>Presenting complaint (triage notes)</summary>
-            <p id="doctor-complaint" class="doctor-complaint"></p>
-          </details>
-          <div class="doctor-guess-row">
-            <input id="doctor-guess-input" type="text" placeholder="Enter your diagnosis guess..." autocomplete="off" />
-            <button id="doctor-guess-btn" class="ghost">Guess</button>
-            <button id="doctor-hint-btn" class="ghost">Hint</button>
-          </div>
-          <p id="doctor-result" class="status"></p>
-          <div id="doctor-hints" class="doctor-hints"></div>
-        </div>
-      </div>
-
       <div id="personality-panel" class="panel hidden">
         <div class="panel-heading">
           <div>

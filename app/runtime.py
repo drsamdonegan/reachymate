@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from app.config import Settings
 from app.models.domain import FaceMatchResult
-from app.models.enums import AppState, HealthStatus
+from app.models.enums import AppState, CommandIntent, HealthStatus
 from app.services.audio.asr import CommandRecognizer
 from app.services.audio.audio_router import AudioRouter
 from app.services.audio.barge_in_guard import BargeInGuard
@@ -28,6 +28,7 @@ from app.services.audio.xvf import XvfController
 from app.services.conversation import ConversationCoordinator
 from app.services.door import PlaceholderDoorAction
 from app.services.knowledge import PublicKnowledgeClient
+from app.services.live import OpenAIGptLiveSession
 from app.services.policy.decision_engine import DecisionEngine
 from app.services.reachy.daemon_supervisor import DaemonSupervisor
 from app.services.reachy.media import ReachyMediaAdapter
@@ -51,6 +52,7 @@ from app.services.vision.enrollment import EnrollmentService
 from app.services.vision.face_detect import YuNetFaceDetector
 from app.services.vision.face_embed import SFaceEmbedder
 from app.services.vision.face_match import FaceMatcher, IdentificationService
+from app.services.vision.model_view import ModelCameraView, capture_model_view
 from app.services.vision.pose import FacePoseEstimator
 from app.state_machine import OfficeBouncerStateMachine
 from app.storage.db import create_session_factory, init_db, session_scope
@@ -260,6 +262,7 @@ class AppContext:
         self._routing_task = None
         self._idle_task = None
         self._safe_hold_task = None
+        self._hardware_fault_lock = asyncio.Lock()
         self._track_ref = str(uuid4())
 
         self.detector = YuNetFaceDetector(
@@ -296,6 +299,7 @@ class AppContext:
             detector=self.detector,
             calibration=calibration,
             on_face=self.robot.look_at_face,
+            uncalibrated_demo=settings.uncalibrated_conversation_demo,
         )
         self.attention.worker.on_fault = self._hardware_fault
         if settings.mouth_landmarker_path and settings.mouth_landmarker_sha256:
@@ -361,8 +365,9 @@ class AppContext:
         self.realtime = None
         if settings.realtime_enabled:
             if not isinstance(self.microphone, ReachyMediaAdapter):
-                raise RuntimeError("Realtime voice requires the shared Reachy media adapter")
-            self.realtime = OpenAIRealtimeSession(
+                raise RuntimeError("OpenAI voice requires the shared Reachy media adapter")
+            session_type = OpenAIGptLiveSession if settings.voice_api == "gpt_live" else OpenAIRealtimeSession
+            self.realtime = session_type(
                 settings=settings,
                 playback=self.microphone,
                 knowledge=self.public_knowledge,
@@ -384,9 +389,14 @@ class AppContext:
         )
         if self.realtime is not None:
             self.realtime.on_closed = self.conversation.on_realtime_closed
+            self.realtime.idle_timeout_paused = lambda: self.conversation.attended_chat_active
             self.realtime.registry.set_handler("route_visitor", self._route_visitor)
             self.realtime.registry.set_handler("notify_staff", self._notify_staff)
             self.realtime.registry.set_handler("get_visitor_request_status", self._visitor_status)
+            self.realtime.registry.set_handler("robot_motion", self._robot_motion)
+            if isinstance(self.realtime, OpenAIGptLiveSession) and settings.camera_vision_enabled:
+                self.realtime.registry.set_handler("inspect_camera", self._inspect_camera)
+                self.realtime.vision_snapshot_provider = self._capture_model_view
 
         self.vad = VoiceActivityDetector(settings.vad_model_path, threshold=settings.vad_threshold)
         self.wakeword = WakeWordDetector(
@@ -425,9 +435,10 @@ class AppContext:
             doa_supplier=self.doa.latest if self.doa else lambda: None,
             on_activity=self.conversation.gated_activity,
             on_track_changed=self.conversation.update_engaged_track,
+            attended_chat_supplier=lambda: self.conversation.attended_chat_active,
             on_fault=self._hardware_fault,
             on_barge_in=self.realtime.cancel_response
-            if self.realtime and settings.local_barge_in_enabled
+            if self.realtime and settings.local_barge_in_enabled and settings.voice_api == "realtime"
             else None,
             barge_in_allowed=lambda: bool(
                 self.realtime and self.realtime.running and not self.realtime._input_suspended
@@ -725,27 +736,116 @@ class AppContext:
         await self.robot.speak(text)
 
     async def start_voice_test(self) -> dict[str, Any]:
-        """Open the same wake-scoped Realtime path from the loopback diagnostics UI."""
+        """Open the selected wake-scoped voice path from the loopback diagnostics UI."""
 
         if self.realtime is None:
-            raise RuntimeError("Realtime voice is not enabled")
-        await self.conversation.handle_wake()
+            raise RuntimeError("OpenAI voice is not enabled")
+        await self.conversation.handle_wake(attended=self.settings.attended_chat_enabled)
         return self.realtime.diagnostics()
 
+    async def stop_voice_test(self) -> dict[str, str]:
+        await self.conversation.handle_command(CommandIntent.CANCEL)
+        return {"status": "stopped"}
+
+    async def send_voice_request(self, text: str) -> dict[str, str]:
+        if self.realtime is None or not self.realtime.running or self.realtime._input_suspended:
+            raise RuntimeError("Start a voice test and finish any local consent step first")
+        sender = getattr(self.realtime, "send_text", None)
+        if sender is None:
+            raise RuntimeError("Text requests require GPT-Live")
+        await sender(text)
+        return {"status": "sent"}
+
     def get_camera_snapshot(self) -> bytes | None:
-        try:
-            return self.camera.get_snapshot_bytes()
-        finally:
-            if self.reachy_media is not None:
-                self.reachy_media.release_idle_camera()
+        # Dashboard polling must not wake the dormant camera or repeatedly
+        # tear down the capture that the engagement tracker is using.
+        if self.reachy_media is not None and not self.attention.enabled:
+            return None
+        return self.camera.get_snapshot_bytes()
 
     def audio_diagnostics(self) -> dict[str, Any]:
         diagnostics = self.audio_router.diagnostics()
+        diagnostics["conversation"] = self.conversation.diagnostics()
         if self.reachy_media is not None:
             diagnostics["reachy_media"] = self.reachy_media.diagnostics()
         if self.realtime is not None:
             diagnostics["realtime"] = self.realtime.diagnostics()
+            diagnostics["voice"] = diagnostics["realtime"]
+        observation = self.attention.latest()
+        diagnostics["attention"] = {
+            "enabled": self.attention.enabled,
+            "degraded_reason": self.attention.degraded_reason,
+            "face_present": observation is not None and observation.in_zone,
+        }
+        power = getattr(self.robot, "power", None)
+        if power:
+            diagnostics["power"] = {
+                "parked": power.parked,
+                "parking": power.parking,
+                "joint_sag_limit_radians": power.joint_sag_limit,
+                "bench_tolerance": self.settings.uncalibrated_conversation_demo,
+            }
+        motion = getattr(self.robot, "motion", None)
+        if motion:
+            diagnostics["motion"] = motion.expression_diagnostics()
         return diagnostics
+
+    def robot_motion_capabilities(self) -> dict:
+        capabilities = getattr(self.robot, "motion_capabilities", None)
+        return capabilities() if capabilities else {"ready": False, "axes": [], "dances": [], "emotions": []}
+
+    def _model_vision_allowed(self) -> bool:
+        return bool(
+            self.settings.camera_vision_enabled
+            and self.conversation.attended_chat_active
+            and self.state_machine.state == AppState.ENGAGED
+            and self.attention.enabled
+            and self.guard.is_engaged()
+            and self.realtime is not None
+            and self.realtime.running
+            and not self.realtime._input_suspended
+            and isinstance(self.camera, ReachyCameraAdapter)
+        )
+
+    async def _inspect_camera(self, arguments: dict, _call_id: str) -> dict:
+        if not self._model_vision_allowed():
+            return {"status": "unavailable", "reason": "start_attended_chat_or_finish_local_check"}
+        return {"status": "ready", "question": arguments["question"]}
+
+    async def _capture_model_view(self) -> ModelCameraView | None:
+        if not self._model_vision_allowed():
+            return None
+        motion = getattr(self.robot, "motion", None)
+        if motion is not None:
+            async with asyncio.timeout(4.5):
+                while motion.expression_diagnostics()["active"]:
+                    if not self._model_vision_allowed():
+                        return None
+                    await asyncio.sleep(0.05)
+        view = await asyncio.to_thread(capture_model_view, self.camera)
+        return view if self._model_vision_allowed() else None
+
+    async def _robot_motion(self, arguments: dict, _call_id: str = "dashboard") -> dict:
+        from app.services.reachy.motion.commands import RobotMotionRequest
+
+        request = RobotMotionRequest.model_validate(arguments)
+        if request.action == "capabilities":
+            return {"status": "available", **self.robot_motion_capabilities()}
+        perform = getattr(self.robot, "perform_motion", None)
+        if perform is None:
+            return {"status": "unavailable"}
+        if request.action != "stop":
+            if (
+                not self.guard.is_engaged()
+                or self.state_machine.state != AppState.ENGAGED
+                or self.realtime is not None
+                and self.realtime._input_suspended
+            ):
+                return {"status": "blocked", "reason": "start_voice_test_or_finish_local_check_first"}
+        result = await perform(request)
+        if result.get("status") == "started":
+            self.conversation.gated_activity()
+        return result
 
     def telemetry_snapshot(self) -> list[dict[str, Any]]:
         return self.telemetry.snapshot()
@@ -762,7 +862,7 @@ class AppContext:
                 "faces": [{"bbox": list(face.bbox), "confidence": face.confidence} for face in detections],
             }
         finally:
-            if self.reachy_media is not None:
+            if self.reachy_media is not None and not self.attention.enabled:
                 self.reachy_media.release_idle_camera()
 
     async def simulate_attempt(self) -> None:
@@ -829,18 +929,19 @@ class AppContext:
             )
         if not self.settings.reachy_enabled or self.settings.reachy_simulation:
             errors.append("production requires a real Reachy adapter")
-        if self.settings.tts_engine not in {"realtime", "fixed_clips"}:
-            errors.append("production speech requires Realtime or pinned fixed clips")
+        if self.settings.tts_engine not in {"live", "realtime", "fixed_clips"}:
+            errors.append("production speech requires GPT-Live, Realtime or pinned fixed clips")
         if not self.settings.realtime_enabled:
-            errors.append("production requires wake-scoped OpenAI Realtime voice")
+            errors.append("production requires wake-scoped OpenAI voice")
         if self.settings.openai_api_key is None:
             errors.append("production OpenAI credential is missing")
         if not self.settings.realtime_safety_identifier_key:
-            errors.append("production requires a keyed Realtime safety identifier")
+            errors.append("production requires a keyed voice safety identifier")
         if self.settings.data_encryption_key is None and not self.settings.kek_endpoint:
             errors.append("production sensitive-data encryption key is missing")
-        if self.settings.openai_realtime_model != "gpt-realtime-2.1":
-            errors.append("production must use the approved current Realtime model")
+        approved = "gpt-live-1" if self.settings.voice_api == "gpt_live" else "gpt-realtime-2.1"
+        if self.settings.voice_model != approved:
+            errors.append("production must use the approved model for the selected voice API")
         if not self.settings.mlai_public_knowledge_token:
             errors.append("production requires an organization-scoped public Roo service principal")
         if self.settings.wakeword_engine != "sherpa_onnx":
@@ -964,7 +1065,9 @@ class AppContext:
         self.system_health.set_status(
             "attention",
             HealthStatus.HEALTHY
-            if self.attention.tracker and self.attention.heartbeat.healthy()
+            if self.attention.tracker
+            and self.attention.heartbeat.healthy()
+            and not self.attention.degraded_reason
             else HealthStatus.DEGRADED,
             {"reason": self.attention.degraded_reason},
         )
@@ -973,7 +1076,12 @@ class AppContext:
                 "daemon",
                 HealthStatus.HEALTHY if self.daemon_supervisor.heartbeat.healthy() else HealthStatus.ERROR,
             )
-        if isinstance(self.robot, ReachyRobotAdapter) and self.robot.motion and self.robot.motion.error:
+        if (
+            isinstance(self.robot, ReachyRobotAdapter)
+            and self.robot.motion
+            and self.robot.motion.error
+            and not getattr(self.robot.power, "parking", False)
+        ):
             await self._hardware_fault("motion_fault")
         if self.attention.enabled:
             camera_ok = self.attention.heartbeat.healthy()
@@ -1024,11 +1132,15 @@ class AppContext:
 
     async def _prepare_engagement(self) -> None:
         if self._idle_task:
-            self._idle_task.cancel()
+            if getattr(getattr(self.robot, "power", None), "parking", False):
+                await asyncio.shield(self._idle_task)
+            else:
+                self._idle_task.cancel()
         self._track_ref = str(uuid4())
         wake = getattr(self.robot, "wake", None)
         if wake:
             await wake(self.doa.wake_bearing() if self.doa else 0.0)
+        await self.state_machine.transition(AppState.ENGAGED)
         if self.reachy_media:
             frame = await asyncio.to_thread(self.camera.get_frame)
             self.system_health.set_status(
@@ -1037,6 +1149,9 @@ class AppContext:
         self.attention.set_enabled(True)
 
     async def _play_consent_notice(self) -> None:
+        motion = getattr(self.robot, "motion", None)
+        if motion:
+            motion.stop_expression()
         # Simulation models the duration; hardware uses the pinned local clip.
         if self.reachy_media is None:
             from app.services.conversation.fallback_audio import CONSENT_NOTICE
@@ -1058,6 +1173,12 @@ class AppContext:
             )
 
     async def _end_engagement(self) -> None:
+        motion = getattr(self.robot, "motion", None)
+        if motion:
+            motion.stop_expression()
+            from app.services.reachy.motion.manager import MotionMode
+
+            motion.set_mode(MotionMode.IDLE_NEUTRAL)
         self.attention.set_enabled(False)
         self.av_gate.reset()
         if self.reachy_media:
@@ -1068,19 +1189,33 @@ class AppContext:
         if getattr(self, "_stopping", False):
             return
         await self.state_machine.transition(AppState.IDLE)
-        if self._idle_task:
+        if self._idle_task and self._idle_task is not asyncio.current_task():
             self._idle_task.cancel()
         self._idle_task = asyncio.create_task(self._park_after_idle())
 
     async def _park_after_idle(self, delay=60) -> None:
         await asyncio.sleep(delay)
-        if not self.guard.is_engaged() and not self.access_disabled:
+        if (
+            self.state_machine.state == AppState.IDLE
+            and not self.guard.is_engaged()
+            and not self.access_disabled
+        ):
             park = getattr(self.robot, "park", None)
             if park:
-                await park()
+                try:
+                    await park()
+                except Exception:
+                    await self._hardware_fault("park_failed")
+                    return
             await self.state_machine.transition(AppState.DORMANT)
 
     async def _hardware_fault(self, reason: str) -> None:
+        async with self._hardware_fault_lock:
+            if self.state_machine.state == AppState.SAFE_HOLD:
+                return
+            await self._enter_safe_hold(reason)
+
+    async def _enter_safe_hold(self, reason: str) -> None:
         if getattr(self, "_stopping", False):
             return
         self.telemetry.publish("hardware_fault", {"reason": reason})

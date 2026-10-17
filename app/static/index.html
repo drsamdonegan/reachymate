@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Reachy Office Bouncer</title>
-    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/style.css?v=20261017-launcher" />
   </head>
   <body>
     <div class="page">
@@ -34,9 +34,15 @@
             <h2>Reachy's View</h2>
             <div class="inline">
               <button id="start-voice-test">Start Voice Test</button>
+              <button id="stop-voice-test" disabled>Stop chat</button>
               <button id="simulate-attempt">Test Access Placeholder</button>
             </div>
           </div>
+          <div id="voice-test-status" class="muted">Say “Hey Reachy” or start a voice test.</div>
+          <p id="voice-mode-notice" class="muted"></p>
+          <div id="voice-audio-status" class="muted" aria-live="polite"></div>
+          <p id="model-vision-status" class="muted" aria-live="polite"></p>
+          <p id="model-vision-observation" class="muted" aria-live="polite"></p>
           <img id="camera-feed" alt="Reachy camera feed" />
           <div id="camera-status" class="muted"></div>
         </article>
@@ -53,7 +59,55 @@
 
         <article class="panel">
           <h2>Actions</h2>
-          <div id="voice-test-status" class="muted">Say “Hey Reachy” or start a voice test.</div>
+          <h3>Robot movements</h3>
+          <p class="muted">Start a voice test, then ask Roo to look around, dance, nod or wiggle his antennas.</p>
+          <form id="robot-request-form" class="stack">
+            <label for="robot-request-text">Ask Roo (text)</label>
+            <div class="inline">
+              <input id="robot-request-text" value="Please look around." maxlength="240" />
+              <button type="submit">Ask Roo</button>
+            </div>
+          </form>
+          <div class="inline wrap" id="motion-buttons">
+            <button data-robot-motion="look" data-direction="left">Look left</button>
+            <button data-robot-motion="look" data-direction="right">Look right</button>
+            <button data-robot-motion="look" data-direction="up">Look up</button>
+            <button data-robot-motion="look" data-direction="down">Look down</button>
+            <button data-robot-motion="look" data-direction="around">Look around</button>
+            <button data-robot-motion="gesture" data-name="nod">Nod</button>
+            <button data-robot-motion="gesture" data-name="wiggle_antennas">Wiggle antennas</button>
+            <button data-robot-motion="gesture" data-name="neutral">Neutral pose</button>
+            <button data-robot-motion="stop" class="danger">Stop movement</button>
+          </div>
+          <p id="motion-status" class="muted"></p>
+          <form id="motion-library-form" class="stack">
+            <label for="motion-kind">Movement library</label>
+            <div class="inline wrap">
+              <select id="motion-kind"><option value="dance">Dance</option><option value="emotion">Expression</option></select>
+              <select id="motion-name" aria-label="Movement name"></select>
+              <button type="submit">Play movement</button>
+            </div>
+          </form>
+          <p id="motion-result" class="muted" aria-live="polite">Loading movement library…</p>
+          <details>
+            <summary>Head, body and antenna pose</summary>
+            <form id="motion-pose-form" class="stack">
+              <p class="muted">Leave fields blank to keep that axis. Coordinates are in Reachy's frame. Unreachable combinations are rejected.</p>
+              <div class="grid two">
+                <label>Head forward (mm)<input type="number" name="x_mm" min="-40" max="40" step="1" /></label>
+                <label>Head left (mm)<input type="number" name="y_mm" min="-40" max="40" step="1" /></label>
+                <label>Head height (mm)<input type="number" name="z_mm" min="-50" max="30" step="1" /></label>
+                <label>Head roll (°)<input type="number" name="roll_degrees" min="-40" max="40" step="1" /></label>
+                <label>Head pitch (°)<input type="number" name="pitch_degrees" min="-40" max="40" step="1" /></label>
+                <label>Head yaw (°)<input type="number" name="yaw_degrees" min="-180" max="180" step="1" /></label>
+                <label>Body yaw (°)<input type="number" name="body_yaw_degrees" min="-160" max="160" step="1" /></label>
+                <label>Right antenna (°)<input type="number" name="right_antenna_degrees" min="-175" max="175" step="1" /></label>
+                <label>Left antenna (°)<input type="number" name="left_antenna_degrees" min="-175" max="175" step="1" /></label>
+                <label>Move duration (seconds)<input type="number" name="duration_seconds" value="2" min="0.5" max="20" step="0.5" /></label>
+              </div>
+              <button type="submit">Move to pose</button>
+            </form>
+          </details>
           <form id="speech-form" class="stack">
             <label for="speech-text">Test speech</label>
             <div class="inline">
@@ -106,6 +160,6 @@
       </section>
     </div>
 
-    <script src="/static/main.js"></script>
+    <script src="/static/main.js?v=20261017-launcher"></script>
   </body>
 </html>

@@ -3,6 +3,7 @@
 | Component | Upstream | License/use |
 |---|---|---|
 | Reachy Mini SDK 1.11.0 | Pollen Robotics | Apache-2.0; external SDK client |
+| Reachy Mini dances and emotions | [Pollen dances](https://huggingface.co/datasets/pollen-robotics/reachy-mini-dances-library), [Pollen emotions](https://huggingface.co/datasets/pollen-robotics/reachy-mini-emotions-library) | Apache-2.0; pinned revisions in `app/services/reachy/motion/expressions.py`; downloaded motion JSON only, no sidecar sounds |
 | Conversation prototype and motion adaptations | repository history / Pollen conversation app | Preserve MIT/Apache notices with source |
 | sherpa-onnx KWS/VAD | k2-fsa/sherpa-onnx | Apache-2.0; pinned manifest |
 | Vosk | alphacep/vosk-api | Apache-2.0; pinned English small model |
