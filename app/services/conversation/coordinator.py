@@ -81,6 +81,7 @@ class ConversationCoordinator:
     def diagnostics(self) -> dict[str, Any]:
         return {
             "attended_available": self.settings.attended_chat_enabled,
+            "dashboard_auto_start": self.settings.dashboard_auto_chat,
             "max_seconds": self.settings.attended_chat_max_seconds,
             "mode": "attended_chat" if self.attended_chat_active else "concierge",
             "remaining_seconds": round(max(0, self._attended_until - time.monotonic()))

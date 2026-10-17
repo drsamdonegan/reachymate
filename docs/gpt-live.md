@@ -4,6 +4,8 @@ The USB test launcher selects OpenAI GPT-Live, using `gpt-live-1` for full-duple
 
 The staging `--demo` launcher also enables **Start chat** on the existing dashboard. This explicit attended mode streams the echo-cancelled Reachy microphone continuously until **Stop chat**, cancellation or ten minutes. It tolerates camera loss and head movements without muting input or ending the session. The dashboard discloses the live microphone and remaining time. Normal wake-word sessions retain speaker gating and departure/silence timeouts. Attended mode is rejected outside the staging, shadow-only GPT-Live profile; local access/consent grammar remains face-gated in both modes.
 
+Double-click `Start Reachy.command` for the complete local stack: it starts/reuses the no-media daemon and loopback mocks, launches `--demo --auto-chat`, connects voice and opens the same dashboard. In this opt-in profile, reopening the dashboard starts one attended session if stopped. Stop remains effective until another page opening or explicit Start; polling never continuously restarts a stopped session. Closing the tab does not end chat. The ordinary manual `--demo` command does not enable auto chat. `DASHBOARD_AUTO_CHAT` requires attended chat and therefore the staging, shadow-only GPT-Live constraints.
+
 ## Configuration
 
 ```dotenv

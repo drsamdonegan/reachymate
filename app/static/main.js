@@ -5,6 +5,8 @@ const telemetryFeed = document.querySelector("#telemetry-feed");
 const cameraFeed = document.querySelector("#camera-feed");
 const cameraStatus = document.querySelector("#camera-status");
 let cameraSourceName = "Reachy Mini Camera";
+let dashboardStartAttempted = false;
+let chatStartPending = false;
 
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
@@ -73,6 +75,8 @@ async function refreshVoice() {
       : "";
     const realtime = diagnostics.voice || diagnostics.realtime;
     const conversation = diagnostics.conversation || {};
+    const autoStart = !dashboardStartAttempted && conversation.dashboard_auto_start;
+    dashboardStartAttempted = true;
     const vision = realtime?.vision;
     document.querySelector("#model-vision-status").textContent = vision?.enabled
       ? `Model vision: Reachy camera snapshots on request · ${vision.images_sent} sent${vision.last_image_age_seconds == null ? "" : ` · Last capture ${Math.round(vision.last_image_age_seconds)}s ago`}${vision.last_error ? ` · ${vision.last_error}` : ""}`
@@ -84,7 +88,7 @@ async function refreshVoice() {
       ? "Start chat" : "Start Voice Test";
     document.querySelector("#stop-voice-test").disabled = !realtime?.running;
     document.querySelector("#voice-mode-notice").textContent = conversation.attended_available
-      ? `Start chat streams Reachy's microphone to OpenAI until Stop chat or ${Math.ceil(conversation.max_seconds / 60)} minutes. Looking around won't mute your conversation.${vision?.enabled ? " Visual questions send a fresh camera snapshot to OpenAI." : ""}`
+      ? `${conversation.dashboard_auto_start ? "Opening this dashboard starts chat. " : ""}Chat streams Reachy's microphone to OpenAI until Stop chat or ${Math.ceil(conversation.max_seconds / 60)} minutes. Closing the tab does not stop chat; use Stop chat.${vision?.enabled ? " Visual questions send a fresh camera snapshot to OpenAI." : ""}`
       : "";
     const status = document.querySelector("#voice-test-status");
     const audioStatus = document.querySelector("#voice-audio-status");
@@ -107,8 +111,9 @@ async function refreshVoice() {
       const duplex = realtime.full_duplex ? " · Full duplex" : "";
       status.textContent = `${realtime.api_label || "Realtime"} · ${realtime.model} connected${duplex} · ${focus}${mode}`;
     }
+    if (autoStart && !realtime?.running) await startVoiceChat();
   } catch (error) {
-    document.querySelector("#voice-test-status").textContent = "Voice service unavailable.";
+    document.querySelector("#voice-test-status").textContent = "Voice service unavailable. Open Start Reachy.command to start the local services.";
     document.querySelector("#voice-audio-status").textContent = "";
   }
 }
@@ -236,8 +241,11 @@ document.querySelector("#simulate-attempt").addEventListener("click", async () =
   await refreshEvents();
 });
 
-document.querySelector("#start-voice-test").addEventListener("click", async (event) => {
-  const button = event.currentTarget;
+async function startVoiceChat() {
+  if (chatStartPending) return;
+  dashboardStartAttempted = true;
+  chatStartPending = true;
+  const button = document.querySelector("#start-voice-test");
   const status = document.querySelector("#voice-test-status");
   button.disabled = true;
   status.textContent = "Connecting to Roo…";
@@ -251,10 +259,13 @@ document.querySelector("#start-voice-test").addEventListener("click", async (eve
     status.textContent = `Voice test failed: ${String(error)}`;
   } finally {
     button.disabled = false;
+    chatStartPending = false;
   }
-});
+}
+document.querySelector("#start-voice-test").addEventListener("click", startVoiceChat);
 
 document.querySelector("#stop-voice-test").addEventListener("click", async (event) => {
+  dashboardStartAttempted = true;
   event.currentTarget.disabled = true;
   try {
     await fetchJson("/api/admin/conversation/stop", {method: "POST"});

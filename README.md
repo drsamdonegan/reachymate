@@ -24,7 +24,23 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8080
 uv run python -m app.scripts.mock_frontdesk
 ```
 
-Admin routes are disabled unless `ALLOW_DEV_ENDPOINTS=true` and are never registered in production. Real hardware additionally requires camera/microphone permissions, measured calibration and an available local daemon:
+Admin routes are disabled unless `ALLOW_DEV_ENDPOINTS=true` and are never registered in production.
+
+## Open Reachy
+
+Connect USB, turn on external power, then double-click **[Start Reachy.command](Start%20Reachy.command)** in Finder. It starts or reuses the local no-media daemon, booking/front-desk mocks and GPT-Live app, connects chat, and opens the existing dashboard at **http://127.0.0.1:8080/**. Reopening that dashboard starts chat once when stopped. **Stop chat** stays stopped while the page remains open. Closing a browser tab or the launcher Terminal leaves services running; chat still has its ten-minute cap.
+
+Camera and microphone permissions must be granted to Terminal. This launcher uses the existing `.venv`, `.env` and provisioned assets; it never installs packages or changes system login settings. Startup logs are private under `.codex-runtime-logs/launcher-*.log`. Repeated launches reuse healthy services; conflicting ports, missing power or a failed dependency produce a diagnostic instead of starting duplicate hardware owners.
+
+The same launcher is available from a terminal:
+
+```sh
+./"Start Reachy.command"
+# Or connect without opening a browser:
+.venv/bin/python -m app.scripts.launch_reachy --no-browser
+```
+
+For manual service management, run the no-media daemon separately, the loopback mocks, then the app:
 
 ```sh
 .venv/bin/python -m app.scripts.run_reachy_daemon --no-media --no-wake-up-on-start --goto-sleep-on-stop --fastapi-host 127.0.0.1 --dataset-update-interval 0 --no-preload-datasets
@@ -35,7 +51,7 @@ The demo profile uses loopback front-desk/bookings mocks and forces shadow mode.
 
 The launcher selects `VOICE_API=gpt_live` and `TTS_ENGINE=live`. Cloud voice still uses the existing `REALTIME_ENABLED` enable switch and `REALTIME_SAFETY_IDENTIFIER_KEY` secret. The previous Realtime transport remains explicitly selectable with `VOICE_API=realtime`; connection failures do not switch APIs automatically. See [GPT-Live transport](docs/gpt-live.md) for configuration, lifecycle and diagnostics.
 
-For uninterrupted bench conversation, click **Start chat**. The staging demo streams Reachy's microphone continuously for up to ten minutes, including while he looks away or dances. **Stop chat** ends it immediately. Wake-word concierge sessions continue to use the face/audio gate; local biometric consent remains gated in both modes. The dashboard shows the active mode and remaining time.
+For uninterrupted bench conversation, use the launcher or click **Start chat**. The staging demo streams Reachy's microphone continuously for up to ten minutes, including while he looks away or dances. **Stop chat** ends it immediately. The manual `--demo` command retains click-to-start behavior; add `--auto-chat` for the launcher's dashboard behavior. Wake-word concierge sessions continue to use the face/audio gate; local biometric consent remains gated in both modes. The dashboard shows the active mode and remaining time.
 
 The staging demo also supports camera questions such as **What can you see?** and **What am I holding?** A fresh still from Reachy's camera goes to the existing vision-capable Responses backend, whose findings GPT-Live speaks. The dashboard shows model snapshot counts and its latest observation. Snapshots are on request, never a continuous video stream; model vision is opt-in and limited to attended chat.
 

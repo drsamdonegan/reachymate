@@ -8,6 +8,8 @@ The `run_reachy_live_test --demo` profile uses real USB audio/camera/motors and 
 
 Open [the dashboard](http://127.0.0.1:8080), [audio status](http://127.0.0.1:8080/api/admin/diagnostics/audio) and [recent telemetry](http://127.0.0.1:8080/api/admin/diagnostics/telemetry). Leave the telemetry visible while testing.
 
+For automatic startup, double-click `Start Reachy.command`. Verify it opens the existing dashboard with connected GPT-Live, then launch again and confirm it reuses all four services. Click Stop chat and wait across several status polls: voice must stay stopped. Reopen/reload the dashboard: attended chat should reconnect once. The `--no-browser` launcher option exercises startup without a browser. The manual `run_reachy_live_test --demo` profile retains click-to-start behavior unless `--auto-chat` is supplied. Stop chat before running the resting/local-wake checks below; reopening an auto-chat dashboard during those checks intentionally starts attended chat.
+
 | Test | Do this | Expected result |
 | --- | --- | --- |
 | Resting baseline | Leave Reachy alone until he rests. | Camera is off; `voice.running` is false; audio remains running; `power.parked` is true. [Motor status](http://127.0.0.1:8000/api/motors/status) says `disabled`. |

@@ -42,11 +42,16 @@ def main() -> None:
         "--demo", action="store_true", help="Use loopback mock bookings and front desk; still shadow only"
     )
     parser.add_argument(
+        "--auto-chat", action="store_true", help="With --demo, start attended chat when the dashboard opens"
+    )
+    parser.add_argument(
         "--no-daemon-check",
         action="store_true",
         help="Start even when the local Reachy daemon port is not reachable.",
     )
     args = parser.parse_args()
+    if args.auto_chat and not args.demo:
+        parser.error("--auto-chat requires --demo")
 
     for key, value in LIVE_TEST_DEFAULTS.items():
         os.environ.setdefault(key, value)
@@ -61,6 +66,8 @@ def main() -> None:
         os.environ["UNCALIBRATED_CONVERSATION_DEMO"] = "true"
         os.environ["ATTENDED_CHAT_ENABLED"] = "true"
         os.environ["CAMERA_VISION_ENABLED"] = "true"
+    if args.auto_chat:
+        os.environ["DASHBOARD_AUTO_CHAT"] = "true"
     if shutil.disk_usage(Path.cwd()).free < 5 * 2**30:
         raise SystemExit("Live test requires at least 5 GiB free")
 

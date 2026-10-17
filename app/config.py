@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     live_max_output_buffer_seconds: float = Field(default=1.0, ge=0.4, le=3.0)
     live_playback_reserve_seconds: float = Field(default=0.2, ge=0, le=0.4)
     attended_chat_enabled: bool = False
+    dashboard_auto_chat: bool = False
     camera_vision_enabled: bool = False
     attended_chat_max_seconds: float = Field(default=600, ge=30, le=900)
     openai_api_key: SecretStr | None = None
@@ -174,6 +175,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def restrict_uncalibrated_demo(self):
+        if self.dashboard_auto_chat and not self.attended_chat_enabled:
+            raise ValueError("Dashboard auto chat requires attended chat")
         if self.camera_vision_enabled and not self.attended_chat_enabled:
             raise ValueError("Model camera vision requires attended chat")
         if self.attended_chat_enabled and (

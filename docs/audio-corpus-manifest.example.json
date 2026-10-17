@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "samples": [
+    {
+      "path": "validation/wake/visitor-01-1m-70dba.wav",
+      "split": "validation",
+      "expect_wake": true,
+      "category": "wake_phrase",
+      "distance_m": 1.0,
+      "room_dba": 70
+    },
+    {
+      "path": "validation/commands/open-door-visitor-01-plus5db.wav",
+      "split": "validation",
+      "expected_command": "open door",
+      "snr_db": 5,
+      "category": "allowed_command"
+    },
+    {
+      "path": "validation/dangerous/hold-the-door.wav",
+      "split": "validation",
+      "dangerous_negative": true,
+      "category": "similar_access_phrase"
+    },
+    {
+      "path": "validation/negative/busy-room-hour-01.wav",
+      "split": "validation",
+      "category": "busy_room"
+    }
+  ]
+}
