@@ -13,11 +13,13 @@ registration alone never means someone is checked in.
    device while Luma is scanning.
    His head wakes to the normal position. Local camera preview, model images and movement requests pause;
    emergency Stop movement still works. If the popup is blocked, allow the dashboard to open a tab and retry.
-3. Sign in to Luma with check-in access. Allow camera access for Luma and select **Reachy Mini Camera**.
-   Use Luma's **Flip Camera** control if necessary. Cover Reachy's lens briefly to confirm that the preview
-   darkens; don't assume the browser selected the USB camera instead of the MacBook's camera.
+3. Sign in to Luma with check-in access. In Chrome, open **Settings → Privacy and security → Site settings
+   → Camera** and select **Reachy Mini Camera** from the device dropdown. Reload Luma and allow camera access.
+   Chrome's selected default camera also applies to other sites. Luma's **Flip Camera** can fail on desktop;
+   use the named Chrome device selector if it shows the MacBook or reports a media error. Cover Reachy's
+   lens briefly to confirm that the preview darkens. See [Chrome's camera selection instructions](https://support.google.com/chrome/answer/2693767).
 4. In **Scanner Options**, choose **Express → Confirm**. Check that the page says **Express Mode On**.
-   Check this in every new scanner tab: a newly opened scanner can revert to Standard mode even in the same browser.
+   Check this after opening or reloading a scanner: both can revert to Standard mode even in the same browser.
 5. Hold one guest's QR code in front of Reachy. Luma automatically records a valid single-ticket arrival
    and displays the result. There is no per-person dashboard click and no API key is needed. Multiple-ticket
    guests still require selecting tickets in Luma; invalid/unapproved tickets go to staff.
