@@ -6,6 +6,7 @@ import asyncio
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.services.reachy.motion.commands import RobotMotionRequest
@@ -15,6 +16,66 @@ router = APIRouter(prefix="/api/admin")
 
 def get_ctx(request: Request):
     return request.app.state.context
+
+
+class EventSelection(BaseModel):
+    event_id: str = Field(min_length=5, max_length=84)
+
+
+class EventScan(BaseModel):
+    qr_code: str = Field(min_length=1, max_length=2048, repr=False)
+
+
+class EventVerification(BaseModel):
+    scan_id: str = Field(min_length=1, max_length=64)
+
+
+def private_result(value):
+    return JSONResponse(value, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+
+
+async def event_action(request, action, *args):
+    from app.services.events.luma import LumaError
+
+    try:
+        return private_result(await getattr(get_ctx(request).event_checkin, action)(*args))
+    except (ValueError, LumaError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/event-checkin")
+async def event_checkin_status(request: Request):
+    return private_result(get_ctx(request).event_checkin.snapshot())
+
+
+@router.post("/event-checkin/event")
+async def event_checkin_event(request: Request, payload: EventSelection):
+    return await event_action(request, "select_event", payload.event_id)
+
+
+@router.post("/event-checkin/start")
+async def event_checkin_start(request: Request):
+    return await event_action(request, "start_scanning")
+
+
+@router.post("/event-checkin/stop")
+async def event_checkin_stop(request: Request):
+    return await event_action(request, "stop_scanning")
+
+
+@router.post("/event-checkin/scan")
+async def event_checkin_scan(request: Request, payload: EventScan):
+    return await event_action(request, "scan", payload.qr_code)
+
+
+@router.post("/event-checkin/verify")
+async def event_checkin_verify(request: Request, payload: EventVerification):
+    return await event_action(request, "verify", payload.scan_id)
+
+
+@router.post("/event-checkin/next")
+async def event_checkin_next(request: Request):
+    return await event_action(request, "next_guest")
 
 
 class EnrollmentSample(BaseModel):

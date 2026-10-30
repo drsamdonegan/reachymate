@@ -59,6 +59,12 @@ The same dashboard includes look, gesture, dance, expression and numeric pose co
 
 ## Verification
 
+The existing dashboard also includes [Luma event check-in](docs/event-checkin.md). Start its QR scanner,
+show a ticket to Reachy's camera, then open **Complete check-in in Luma** to record attendance in Luma's
+signed-in page. With a private calendar API key, **Verify Luma check-in** reads back individual ticket
+timestamps. QR scanning is local; model image uploads pause during scanning. This is an assisted check-in
+flow: the published Luma API currently has no attendance-write endpoint.
+
 ```sh
 uv run pytest app/tests -q
 uv run ruff check app

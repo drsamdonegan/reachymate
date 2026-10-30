@@ -27,6 +27,8 @@ from app.services.audio.wakeword import WakeWordDetector
 from app.services.audio.xvf import XvfController
 from app.services.conversation import ConversationCoordinator
 from app.services.door import PlaceholderDoorAction
+from app.services.events.checkin import EventCheckin
+from app.services.events.luma import LumaClient
 from app.services.knowledge import PublicKnowledgeClient
 from app.services.live import OpenAIGptLiveSession
 from app.services.policy.decision_engine import DecisionEngine
@@ -256,6 +258,22 @@ class AppContext:
         self.microphone = microphone or self.reachy_media or self._build_microphone()
         self.robot = robot or self._build_robot()
         self.camera = camera or self._build_camera()
+        self.event_checkin = EventCheckin(
+            camera=self.camera,
+            camera_name=(
+                "Reachy Mini Camera" if isinstance(self.camera, ReachyCameraAdapter) else "Simulation camera"
+            ),
+            client=LumaClient(settings.luma_api_key),
+            telemetry=self.telemetry,
+            camera_allowed=self._event_camera_allowed,
+            on_confirmed=self._welcome_event_guest,
+            on_scanner_stop=self._release_event_camera,
+        )
+        if settings.luma_event_id:
+            from app.services.events.qr import EVENT_ID
+
+            if EVENT_ID.fullmatch(settings.luma_event_id):
+                self.event_checkin.event = {"id": settings.luma_event_id, "name": "Selected Luma event"}
         self.access_disabled = False
         self._overlay_recovered_at = None
         self._local_models_ready = False
@@ -397,6 +415,7 @@ class AppContext:
             if isinstance(self.realtime, OpenAIGptLiveSession) and settings.camera_vision_enabled:
                 self.realtime.registry.set_handler("inspect_camera", self._inspect_camera)
                 self.realtime.vision_snapshot_provider = self._capture_model_view
+                self.realtime.vision_allowed = self._model_vision_allowed
 
         self.vad = VoiceActivityDetector(settings.vad_model_path, threshold=settings.vad_threshold)
         self.wakeword = WakeWordDetector(
@@ -587,6 +606,7 @@ class AppContext:
                     return_exceptions=True,
                 )
                 components = [
+                    self.event_checkin,
                     self.daemon_supervisor,
                     self.attention,
                     self.doa,
@@ -735,6 +755,25 @@ class AppContext:
             raise RuntimeError("No active voice session")
         await self.robot.speak(text)
 
+    def _event_camera_allowed(self) -> bool:
+        return (
+            not getattr(self, "_stopping", False)
+            and self.state_machine.state != AppState.SAFE_HOLD
+            and not (self.realtime and self.realtime._input_suspended)
+        )
+
+    async def _release_event_camera(self) -> None:
+        if self.reachy_media and not self.attention.enabled:
+            await asyncio.to_thread(self.reachy_media.release_idle_camera)
+        if not getattr(self, "_stopping", False) and self.state_machine.state == AppState.IDLE:
+            if self._idle_task and self._idle_task is not asyncio.current_task():
+                self._idle_task.cancel()
+            self._idle_task = asyncio.create_task(self._park_after_idle())
+
+    async def _welcome_event_guest(self) -> None:
+        if self.realtime and self.realtime.running and not self.realtime._input_suspended:
+            await self.robot.speak("Your event check-in is confirmed. Welcome!")
+
     async def start_voice_test(self) -> dict[str, Any]:
         """Open the selected wake-scoped voice path from the loopback diagnostics UI."""
 
@@ -759,7 +798,7 @@ class AppContext:
     def get_camera_snapshot(self) -> bytes | None:
         # Dashboard polling must not wake the dormant camera or repeatedly
         # tear down the capture that the engagement tracker is using.
-        if self.reachy_media is not None and not self.attention.enabled:
+        if self.reachy_media is not None and not self.attention.enabled and not self.event_checkin.scanning:
             return None
         return self.camera.get_snapshot_bytes()
 
@@ -800,6 +839,7 @@ class AppContext:
             and self.conversation.attended_chat_active
             and self.state_machine.state == AppState.ENGAGED
             and self.attention.enabled
+            and not self.event_checkin.scanning
             and self.guard.is_engaged()
             and self.realtime is not None
             and self.realtime.running
@@ -808,6 +848,8 @@ class AppContext:
         )
 
     async def _inspect_camera(self, arguments: dict, _call_id: str) -> dict:
+        if self.event_checkin.scanning:
+            return {"status": "unavailable", "reason": "finish_event_qr_scanning_first"}
         if not self._model_vision_allowed():
             return {"status": "unavailable", "reason": "start_attended_chat_or_finish_local_check"}
         return {"status": "ready", "question": arguments["question"]}
@@ -862,7 +904,11 @@ class AppContext:
                 "faces": [{"bbox": list(face.bbox), "confidence": face.confidence} for face in detections],
             }
         finally:
-            if self.reachy_media is not None and not self.attention.enabled:
+            if (
+                self.reachy_media is not None
+                and not self.attention.enabled
+                and not self.event_checkin.scanning
+            ):
                 self.reachy_media.release_idle_camera()
 
     async def simulate_attempt(self) -> None:
@@ -1181,7 +1227,7 @@ class AppContext:
             motion.set_mode(MotionMode.IDLE_NEUTRAL)
         self.attention.set_enabled(False)
         self.av_gate.reset()
-        if self.reachy_media:
+        if self.reachy_media and not self.event_checkin.scanning:
             self.reachy_media.release_idle_camera()
         if self._routing_task and self._routing_task is not asyncio.current_task():
             self._routing_task.cancel()
@@ -1199,6 +1245,7 @@ class AppContext:
             self.state_machine.state == AppState.IDLE
             and not self.guard.is_engaged()
             and not self.access_disabled
+            and not self.event_checkin.scanning
         ):
             park = getattr(self.robot, "park", None)
             if park:
@@ -1219,6 +1266,7 @@ class AppContext:
         if getattr(self, "_stopping", False):
             return
         self.telemetry.publish("hardware_fault", {"reason": reason})
+        await self.event_checkin.stop_scanning()
         self.attention.set_enabled(False)
         try:
             await asyncio.wait_for(self.conversation.stop(), timeout=3)

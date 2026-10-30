@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Reachy Office Bouncer</title>
-    <link rel="stylesheet" href="/static/style.css?v=20261017-launcher" />
+    <link rel="stylesheet" href="/static/style.css?v=20261030-luma2" />
   </head>
   <body>
     <div class="page">
@@ -13,6 +13,42 @@
         <h1>Office Bouncer Console</h1>
         <p class="subtitle">Live vision, local telemetry, enrollment, booking checks, and audit logs.</p>
       </header>
+
+      <section class="panel" id="event-checkin-panel" aria-labelledby="event-checkin-title">
+        <div class="panel-head">
+          <h2 id="event-checkin-title">Event check-in · Luma</h2>
+          <span id="event-scanner-status" class="muted" aria-live="polite">Scanner off</span>
+        </div>
+        <p>Hold a ticket QR code in front of Reachy. Complete check-in in Luma, then verify it here.</p>
+        <form id="event-select-form" class="inline wrap">
+          <label for="luma-event-id">Luma event ID</label>
+          <input id="luma-event-id" placeholder="evt-…" maxlength="84" required />
+          <button type="submit">Select event</button>
+        </form>
+        <p id="luma-event-name" class="muted"></p>
+        <div class="inline wrap">
+          <button id="event-scan-start" disabled>Start QR scanner</button>
+          <button id="event-scan-stop" disabled>Stop QR scanner</button>
+          <button id="event-next">Next guest</button>
+        </div>
+        <p class="muted">QR decoding stays on this Mac. Scanning keeps Reachy’s camera on for up to 30 minutes; stop it when finished. Model image uploads are paused while scanning.</p>
+        <p id="event-verification-notice" class="muted"></p>
+        <div id="event-scan-result" class="output" aria-live="polite">Select an event to begin.</div>
+        <ul id="event-tickets"></ul>
+        <div class="inline wrap">
+          <a id="event-luma-checkin" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" hidden>Complete check-in in Luma ↗</a>
+          <button id="event-verify" disabled>Verify Luma check-in</button>
+        </div>
+        <p id="event-checkin-error" role="status"></p>
+        <details>
+          <summary>Paste a ticket QR link</summary>
+          <form id="event-qr-form" class="inline wrap">
+            <label for="event-qr-code">Ticket QR link</label>
+            <input id="event-qr-code" type="password" autocomplete="off" maxlength="2048" required />
+            <button type="submit">Read ticket</button>
+          </form>
+        </details>
+      </section>
 
       <section class="grid">
         <article class="panel">
@@ -160,6 +196,7 @@
       </section>
     </div>
 
-    <script src="/static/main.js?v=20261017-launcher"></script>
+    <script src="/static/event-checkin.js?v=20261030-luma2"></script>
+    <script src="/static/main.js?v=20261030-luma2"></script>
   </body>
 </html>

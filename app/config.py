@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     attended_chat_enabled: bool = False
     dashboard_auto_chat: bool = False
     camera_vision_enabled: bool = False
+    luma_api_key: SecretStr | None = None
+    luma_event_id: str = ""
     attended_chat_max_seconds: float = Field(default=600, ge=30, le=900)
     openai_api_key: SecretStr | None = None
     openai_realtime_url: str = "wss://api.openai.com/v1/realtime"

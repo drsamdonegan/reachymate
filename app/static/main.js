@@ -4,7 +4,7 @@ const eventsList = document.querySelector("#events-list");
 const telemetryFeed = document.querySelector("#telemetry-feed");
 const cameraFeed = document.querySelector("#camera-feed");
 const cameraStatus = document.querySelector("#camera-status");
-let cameraSourceName = "Reachy Mini Camera";
+let cameraSourceName = "Camera";
 let dashboardStartAttempted = false;
 let chatStartPending = false;
 
@@ -68,7 +68,7 @@ async function refreshCamera() {
 async function refreshVoice() {
   try {
     const diagnostics = await fetchJson("/api/admin/diagnostics/audio");
-    cameraSourceName = diagnostics.reachy_media?.camera_source?.name || "Reachy Mini Camera";
+    cameraSourceName = diagnostics.reachy_media?.camera_source?.name || "Simulation camera";
     const movement = diagnostics.motion;
     document.querySelector("#motion-status").textContent = movement
       ? `Motion: ${movement.status}${movement.name ? ` · ${movement.name}` : ""} · ${movement.mode}`

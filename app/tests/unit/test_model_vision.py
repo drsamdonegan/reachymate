@@ -182,6 +182,28 @@ async def test_stop_cancels_an_image_already_waiting_for_the_socket_lock(setting
 
 
 @pytest.mark.asyncio
+async def test_qr_scanning_blocks_an_image_already_waiting_for_the_socket_lock(settings):
+    session, wire, _, _ = session_fixture(settings)
+    allowed = True
+    session.vision_allowed = lambda: allowed
+    await session.start()
+    await session._send_lock.acquire()
+    image = asyncio.create_task(
+        session._send_event(
+            {"type": "response.item.create", "item": {"type": "input_image"}},
+            image_generation=session._generation,
+        )
+    )
+    await asyncio.sleep(0)
+    allowed = False
+    session._send_lock.release()
+    assert not await image
+    assert session.running
+    assert not any("input_image" in json.dumps(e) for e in wire.sent)
+    await session.stop()
+
+
+@pytest.mark.asyncio
 async def test_runtime_vision_requires_active_attended_chat_and_reachy_camera(settings):
     settings.camera_vision_enabled = True
     context = AppContext.__new__(AppContext)
@@ -189,6 +211,7 @@ async def test_runtime_vision_requires_active_attended_chat_and_reachy_camera(se
     context.conversation = SimpleNamespace(attended_chat_active=True)
     context.state_machine = SimpleNamespace(state=AppState.ENGAGED)
     context.attention = SimpleNamespace(enabled=True)
+    context.event_checkin = SimpleNamespace(scanning=False)
     context.robot = SimpleNamespace(motion=None)
     context.guard = BargeInGuard(0)
     context.guard.begin_engagement(10)
@@ -204,9 +227,10 @@ async def test_runtime_vision_requires_active_attended_chat_and_reachy_camera(se
     )
     assert (await context._inspect_camera({"question": "What is here?"}, "c1"))["status"] == "ready"
     assert await context._capture_model_view() is not None
-    for condition in ("consent", "idle", "wrong_camera"):
+    for condition in ("consent", "event_scan", "idle", "wrong_camera"):
         before = len(reads)
         context.realtime._input_suspended = condition == "consent"
+        context.event_checkin.scanning = condition == "event_scan"
         context.conversation.attended_chat_active = condition != "idle"
         if condition == "wrong_camera":
             context.camera = SimpleNamespace(get_frame=frame)

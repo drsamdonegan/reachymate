@@ -98,6 +98,17 @@ button:hover {
   opacity: 0.92;
 }
 
+button:disabled { opacity: 0.45; cursor: default; }
+#event-checkin-panel { margin-bottom: 20px; }
+#event-checkin-panel .inline input { flex: 1; min-width: 180px; }
+#event-scan-result { min-height: 60px; max-height: 150px; }
+#event-checkin-error { color: var(--danger); }
+#event-luma-checkin { color: var(--accent); font-weight: 600; }
+#event-tickets:empty, #event-checkin-error:empty { display: none; }
+@media (max-width: 640px) {
+  #event-checkin-panel .panel-head { align-items: flex-start; flex-direction: column; }
+}
+
 input, select {
   width: 100%;
   border: 1px solid var(--line);

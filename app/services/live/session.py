@@ -106,6 +106,7 @@ class OpenAIGptLiveSession(OpenAIRealtimeSession):
         self._output_guardrail_active = False
         self._last_stop_reason: str | None = None
         self.vision_snapshot_provider = None
+        self.vision_allowed = None
         self._vision_images_sent = 0
         self._last_vision_sent_at = 0.0
         self._last_vision_request_at = -float("inf")
@@ -123,7 +124,10 @@ class OpenAIGptLiveSession(OpenAIRealtimeSession):
         event.setdefault("event_id", str(uuid4()))
         async with self._send_lock:
             if image_generation is not None and (
-                image_generation != self._generation or self._live_closing or self._input_suspended
+                image_generation != self._generation
+                or self._live_closing
+                or self._input_suspended
+                or self.vision_allowed is not None and not self.vision_allowed()
             ):
                 return False
             await self.connection.send(json.dumps(event, separators=(",", ":")))
