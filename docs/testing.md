@@ -6,7 +6,7 @@ The `run_reachy_live_test --demo` profile uses real USB audio/camera/motors and 
 
 ## Bench checklist
 
-For event QR scanning and actual Luma attendance verification, follow the [event check-in test checklist](event-checkin.md#test-checklist). The supported flow requires confirmation in Luma's page; scanning alone does not record attendance.
+For event QR scanning and actual Luma attendance verification, follow the [event check-in test checklist](event-checkin.md#test-checklist). Express Mode records valid single-ticket arrivals automatically in Luma; group tickets still need selection. The assisted local scanner continues to require confirmation in Luma.
 
 Open [the dashboard](http://127.0.0.1:8080), [audio status](http://127.0.0.1:8080/api/admin/diagnostics/audio) and [recent telemetry](http://127.0.0.1:8080/api/admin/diagnostics/telemetry). Leave the telemetry visible while testing.
 

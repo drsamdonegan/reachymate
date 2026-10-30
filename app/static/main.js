@@ -7,6 +7,7 @@ const cameraStatus = document.querySelector("#camera-status");
 let cameraSourceName = "Camera";
 let dashboardStartAttempted = false;
 let chatStartPending = false;
+let cameraHandedToLuma = false;
 
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
@@ -49,12 +50,20 @@ async function refreshEvents() {
 }
 
 async function refreshCamera() {
+  if (cameraHandedToLuma) {
+    const previous = cameraFeed.src;
+    cameraFeed.removeAttribute("src");
+    if (previous.startsWith("blob:")) URL.revokeObjectURL(previous);
+    cameraStatus.textContent = "Camera handed to Luma · preview is in the Luma scanner";
+    return;
+  }
   try {
     const response = await fetch(`/camera/snapshot?ts=${Date.now()}`);
     if (!response.ok) {
       throw new Error("Camera off · say Hey Reachy or start a voice test");
     }
     const blob = await response.blob();
+    if (cameraHandedToLuma) return;
     const previous = cameraFeed.src;
     cameraFeed.src = URL.createObjectURL(blob);
     if (previous.startsWith("blob:")) URL.revokeObjectURL(previous);
@@ -75,6 +84,8 @@ async function refreshVoice() {
       : "";
     const realtime = diagnostics.voice || diagnostics.realtime;
     const conversation = diagnostics.conversation || {};
+    cameraHandedToLuma = conversation.pause_reason === "luma_express";
+    document.querySelector("#start-voice-test").disabled = cameraHandedToLuma;
     const autoStart = !dashboardStartAttempted && conversation.dashboard_auto_start;
     dashboardStartAttempted = true;
     const vision = realtime?.vision;
@@ -95,7 +106,12 @@ async function refreshVoice() {
     audioStatus.textContent = realtime?.full_duplex
       ? `Backend: ${realtime.backend_model} · Input frames: ${Number(realtime.input_frames_sent || 0).toLocaleString()} · Output frames: ${Number(realtime.output_frames_received || 0).toLocaleString()} · Speaking overlap: ${Number(realtime.simultaneous_input_output_frames || 0).toLocaleString()} frames`
       : "";
-    if (!realtime) {
+    if (cameraHandedToLuma) {
+      status.textContent = "Voice paused for Luma Express. Close Luma's scanner, then return the camera above.";
+      document.querySelector("#voice-mode-notice").textContent = "Local wakes and automatic chat are paused while Luma owns the camera.";
+      document.querySelector("#model-vision-status").textContent = "Model vision paused for Luma Express.";
+      document.querySelector("#model-vision-observation").textContent = "";
+    } else if (!realtime) {
       status.textContent = "OpenAI voice is disabled.";
     } else if (realtime.last_error) {
       status.textContent = `${realtime.api_label || "Voice"} error: ${realtime.last_error}`;

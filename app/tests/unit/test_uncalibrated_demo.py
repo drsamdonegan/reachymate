@@ -59,6 +59,7 @@ def test_dashboard_preview_keeps_dormant_camera_off_and_active_capture_open():
         reachy_media=SimpleNamespace(release_idle_camera=lambda: calls.append("release")),
         attention=SimpleNamespace(enabled=False),
         event_checkin=SimpleNamespace(scanning=False),
+        luma_express=SimpleNamespace(active=False),
         camera=SimpleNamespace(get_snapshot_bytes=lambda: calls.append("capture") or b"jpeg"),
     )
     assert AppContext.get_camera_snapshot(ctx) is None

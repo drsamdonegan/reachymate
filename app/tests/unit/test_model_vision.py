@@ -212,6 +212,7 @@ async def test_runtime_vision_requires_active_attended_chat_and_reachy_camera(se
     context.state_machine = SimpleNamespace(state=AppState.ENGAGED)
     context.attention = SimpleNamespace(enabled=True)
     context.event_checkin = SimpleNamespace(scanning=False)
+    context.luma_express = SimpleNamespace(active=False)
     context.robot = SimpleNamespace(motion=None)
     context.guard = BargeInGuard(0)
     context.guard.begin_engagement(10)

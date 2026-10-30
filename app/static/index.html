@@ -3,8 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
     <title>Reachy Office Bouncer</title>
-    <link rel="stylesheet" href="/static/style.css?v=20261030-luma2" />
+    <link rel="stylesheet" href="/static/style.css?v=20261030-express2" />
   </head>
   <body>
     <div class="page">
@@ -19,34 +20,46 @@
           <h2 id="event-checkin-title">Event check-in · Luma</h2>
           <span id="event-scanner-status" class="muted" aria-live="polite">Scanner off</span>
         </div>
-        <p>Hold a ticket QR code in front of Reachy. Complete check-in in Luma, then verify it here.</p>
+        <p>Use Luma Express to check in single-ticket guests automatically with Reachy’s USB camera.</p>
         <form id="event-select-form" class="inline wrap">
           <label for="luma-event-id">Luma event ID</label>
           <input id="luma-event-id" placeholder="evt-…" maxlength="84" required />
-          <button type="submit">Select event</button>
+          <button type="submit" id="event-select-submit">Select event</button>
         </form>
         <p id="luma-event-name" class="muted"></p>
         <div class="inline wrap">
-          <button id="event-scan-start" disabled>Start QR scanner</button>
-          <button id="event-scan-stop" disabled>Stop QR scanner</button>
-          <button id="event-next">Next guest</button>
+          <button id="event-express-start" disabled>Open automatic Luma check-in</button>
+          <a id="event-express-reopen" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" hidden>Reopen Luma scanner ↗</a>
         </div>
-        <p class="muted">QR decoding stays on this Mac. Scanning keeps Reachy’s camera on for up to 30 minutes; stop it when finished. Model image uploads are paused while scanning.</p>
-        <p id="event-verification-notice" class="muted"></p>
-        <div id="event-scan-result" class="output" aria-live="polite">Select an event to begin.</div>
-        <ul id="event-tickets"></ul>
-        <div class="inline wrap">
-          <a id="event-luma-checkin" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" hidden>Complete check-in in Luma ↗</a>
-          <button id="event-verify" disabled>Verify Luma check-in</button>
-        </div>
-        <p id="event-checkin-error" role="status"></p>
-        <details>
-          <summary>Paste a ticket QR link</summary>
-          <form id="event-qr-form" class="inline wrap">
-            <label for="event-qr-code">Ticket QR link</label>
-            <input id="event-qr-code" type="password" autocomplete="off" maxlength="2048" required />
-            <button type="submit">Read ticket</button>
-          </form>
+        <p id="event-express-status" class="output" aria-live="polite">Select an event to begin.</p>
+        <p class="muted">One-time setup in Luma: allow camera access, select <strong>Reachy Mini Camera</strong>, then choose <strong>Scanner Options → Express → Confirm</strong>. Single tickets are recorded automatically; group tickets still need selection. No API key is needed.</p>
+        <p class="muted">Reachy’s chat, face checks and local camera preview pause during the handoff. Luma controls its own camera session: close every Luma scanner tab before returning the camera. Closing this dashboard does not stop Luma.</p>
+        <button id="event-express-finish" hidden>Luma scanner is closed — return camera to Reachy</button>
+        <p id="event-express-error" role="status"></p>
+        <details id="event-assisted-panel">
+          <summary>Assisted scanner and API verification</summary>
+          <div class="inline wrap">
+            <button id="event-scan-start" disabled>Start QR scanner</button>
+            <button id="event-scan-stop" disabled>Stop QR scanner</button>
+            <button id="event-next">Next guest</button>
+          </div>
+          <p class="muted">QR decoding stays on this Mac. Scanning keeps Reachy’s camera on for up to 30 minutes; stop it when finished. Model image uploads are paused while scanning.</p>
+          <p id="event-verification-notice" class="muted"></p>
+          <div id="event-scan-result" class="output" aria-live="polite">Select an event to begin.</div>
+          <ul id="event-tickets"></ul>
+          <div class="inline wrap">
+            <a id="event-luma-checkin" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" hidden>Complete check-in in Luma ↗</a>
+            <button id="event-verify" disabled>Verify Luma check-in</button>
+          </div>
+          <p id="event-checkin-error" role="status"></p>
+          <details>
+            <summary>Paste a ticket QR link</summary>
+            <form id="event-qr-form" class="inline wrap">
+              <label for="event-qr-code">Ticket QR link</label>
+              <input id="event-qr-code" type="password" autocomplete="off" maxlength="2048" required />
+              <button type="submit">Read ticket</button>
+            </form>
+          </details>
         </details>
       </section>
 
@@ -196,7 +209,7 @@
       </section>
     </div>
 
-    <script src="/static/event-checkin.js?v=20261030-luma2"></script>
-    <script src="/static/main.js?v=20261030-luma2"></script>
+    <script src="/static/event-checkin.js?v=20261030-express2"></script>
+    <script src="/static/main.js?v=20261030-express2"></script>
   </body>
 </html>

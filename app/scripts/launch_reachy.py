@@ -185,10 +185,13 @@ def ensure_service(service: Service, root: Path, logs: Path, *, timeout: float =
     raise LaunchError(f"{service.name} is not ready on port {service.port}.{hint} Logs: {logs}")
 
 
-def connect_chat() -> None:
+def connect_chat() -> bool:
     diagnostics = request_json(f"{DASHBOARD_URL}/api/admin/diagnostics/audio")
     conversation = diagnostics.get("conversation", {})
     voice = diagnostics.get("voice", {})
+    if conversation.get("pause_reason") == "luma_express":
+        print("Luma camera handoff is active; leaving voice and camera paused.", flush=True)
+        return False
     if not (
         voice.get("api") == "gpt_live"
         and conversation.get("attended_available")
@@ -204,6 +207,7 @@ def connect_chat() -> None:
         raise LaunchError(
             "GPT-Live did not connect. Open the dashboard for voice diagnostics and Start chat."
         )
+    return True
 
 
 def launch(root: Path = ROOT, *, open_browser: bool = True) -> None:
@@ -212,14 +216,17 @@ def launch(root: Path = ROOT, *, open_browser: bool = True) -> None:
         for service in SERVICES:
             ensure_service(service, root, logs)
         try:
-            connect_chat()
+            chat_active = connect_chat()
         finally:
             # Leave a usable diagnostics window even when cloud voice cannot connect.
             if open_browser:
                 webbrowser.open(f"{DASHBOARD_URL}/")
     print(f"Reachy is ready: {DASHBOARD_URL}/", flush=True)
-    print("Microphone live to OpenAI. Camera snapshots are sent only on visual questions.")
-    print("Stop chat ends the session; reopening the dashboard starts it again (ten-minute cap).")
+    if chat_active:
+        print("Microphone live to OpenAI. Camera snapshots are sent only on visual questions.")
+        print("Stop chat ends the session; reopening the dashboard starts it again (ten-minute cap).")
+    else:
+        print("Luma owns the camera. Close its scanner, then return the camera from the dashboard.")
     print("Services stay running when you close this Terminal. Door actions remain shadow-only.")
 
 

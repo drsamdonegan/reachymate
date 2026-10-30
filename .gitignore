@@ -25,6 +25,7 @@ data/voices/
 data/eval/
 data/audio-corpus/
 data/heartbeat.*
+data/luma-browser-handoff.json
 
 # Build and distribution
 build/

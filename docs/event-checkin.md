@@ -1,18 +1,47 @@
 # Luma event check-in
 
-Use Reachy's existing USB camera and dashboard to read a guest's Luma ticket. Recording attendance uses
-Luma's signed-in check-in page. The dashboard can then verify each ticket's `checked_in_at` timestamp
-through Luma's documented API. A scan or approved registration alone never means someone is checked in.
+The dashboard offers **automatic single-ticket check-in through Luma Express** and the original assisted
+scanner. Both use Reachy's existing USB camera. Luma records attendance; a locally decoded QR or approved
+registration alone never means someone is checked in.
 
-## Setup
+## Automatic check-in with Luma Express
+
+1. Open the existing Reachy launcher/dashboard and confirm the event ID.
+2. Click **Open automatic Luma check-in**. Reachy finishes any current wake, closes cloud voice, cancels
+   face checks and releases the USB camera before opening the official Luma scanner in a new browser tab.
+   His head wakes to the normal position. Local camera preview, model images and movement requests pause;
+   emergency Stop movement still works. If the popup is blocked, allow the dashboard to open a tab and retry.
+3. Sign in to Luma with check-in access. Allow camera access for Luma and select **Reachy Mini Camera**.
+   Use Luma's **Flip Camera** control if necessary. Cover Reachy's lens briefly to confirm that the preview
+   darkens; don't assume the browser selected the USB camera instead of the MacBook's camera.
+4. In **Scanner Options**, choose **Express → Confirm**. Check that the page says **Express Mode On**.
+   This setting is for that scanner/browser; check it again in another profile or after clearing site data.
+5. Hold one guest's QR code in front of Reachy. Luma automatically records a valid single-ticket arrival
+   and displays the result. There is no per-person dashboard click and no API key is needed. Multiple-ticket
+   guests still require selecting tickets in Luma; invalid/unapproved tickets go to staff.
+6. When finished, close **every** Luma scanner tab, then click **Luma scanner is closed — return camera to
+   Reachy** in the dashboard. Click **Start chat** if wanted. Returning the camera does not open a cloud
+   conversation automatically.
+
+The dashboard reports that it released the camera; it cannot inspect Luma's cross-origin page to certify
+camera permission, device choice, Express Mode or a guest's check-in. Results are authoritative in Luma.
+The handoff stays in place until you explicitly return the camera, including across dashboard reloads,
+launcher reuse and app restarts. Closing the dashboard, stopping Reachy, or a robot fault cannot close
+Luma's independent browser scanner. Close it yourself when stopping admission. A private marker at
+`data/luma-browser-handoff.json` preserves that boundary; don't remove it while Luma still uses the camera.
+
+If setup fails partway through, chat stays paused. Retry **Prepare and open Luma again**, or close any
+scanner tabs and return the camera. A failed camera handoff never opens the scanner automatically.
+
+## Optional assisted scanner setup
 
 1. Install the existing `vision` extra (`uv sync --frozen --extra vision --extra audio --extra reachy --extra skills --extra dev`). QR decoding uses OpenCV; no separate scanner hardware is needed.
 2. Set `LUMA_EVENT_ID=evt-...` in the private `.env`, or select the event ID in the dashboard. Find it in the event's permanent/manage URL, or through Luma's entity lookup API. The public event slug and event ID differ. Dashboard selections last for the current app run; `.env` supplies the startup default.
 3. Sign in to Luma in the browser with event management or check-in access.
-4. To enable attendance verification, obtain a calendar-scoped Luma API key through Luma's calendar settings and store it as `LUMA_API_KEY` in `.env`. API access requires Luma Plus. Restart the Reachy app after changing `.env`; reopening an already-running launcher reuses the old process. Keep the key out of source control, chat, screenshots and logs.
+4. To enable attendance verification, obtain a calendar-scoped Luma API key through Luma's calendar settings, then double-click **Configure Luma.command**. Its local Terminal prompt hides the key, verifies access to the selected event with a read-only API call, and saves it in `.env` with owner-only permissions. The equivalent command is `.venv/bin/python -m app.scripts.configure_luma`. API access requires Luma Plus. Restart the Reachy app after changing `.env`; reopening an already-running launcher reuses the old process. Keep the key out of source control, chat, screenshots and logs. The key does not add an attendance-write operation to Luma's API.
 5. Open the existing Reachy launcher/dashboard. Confirm **Reachy's View** is the USB Reachy camera. The scanner itself does not start a cloud voice session or move motors. The launcher's separate auto-chat setting still applies when opening the dashboard. Stop chat if you only want local scanning.
 
-## At the event
+## Assisted check-in at the event
 
 1. Confirm the selected event ID. Click **Start QR scanner** and show one phone ticket to Reachy. Adjust distance/brightness until its full QR fits in the camera view. Keep the robot still while scanning.
 2. Review the result. Codes for other events, unrelated URLs and malformed keys are rejected. Duplicate frames are suppressed. Guest keys can represent several tickets, so all returned tickets are shown individually.
@@ -31,6 +60,11 @@ or an organiser-controlled test registration; do not test on an absent real gues
 
 | Check | Expected result |
 | --- | --- |
+| Express handoff | Start chat, then open automatic check-in. Voice closes, camera preview pauses, and the Luma scanner opens after the device is released. |
+| Browser setup | Confirm Reachy Mini Camera physically and **Express Mode On**. Neither is inferred from the dashboard's handoff flag. |
+| Automatic single ticket | Present an organiser-controlled ticket or a consenting attendee who is present. Luma records the check-in without a confirmation click; its Checked In list/count updates. |
+| Reload and restart | Reload the dashboard, reopen the launcher and restart the app while Luma owns the camera. No cloud voice or local camera capture restarts. |
+| Return to chat | Close all Luma scanner tabs and return the camera. Start chat explicitly; confirm normal camera and voice work again. |
 | Local QR decoding | Show a Luma ticket to the USB camera; its official check-in link appears. Pasting the decoded URL is also available for troubleshooting. |
 | Wrong event / random QR | Rejected without following the URL or contacting a different host. |
 | Repeat the same QR | No duplicate greeting or attendance write; pending tickets stay selected. |
@@ -38,13 +72,13 @@ or an organiser-controlled test registration; do not test on an absent real gues
 | Confirm in Luma, then Verify | Actual ticket timestamps appear; Luma's own guest list shows the same attendance. |
 | Multi-ticket guest | Individual statuses stay visible. Partial attendance never becomes a whole-group confirmation. |
 | API unavailable / no key | Explicit unverified/error state; attendance can still be handled in Luma directly. |
-| Voice and camera ownership | Chat continues while scanning; model camera requests are unavailable. Stop chat keeps the explicitly started scanner active. Stop scanning releases an otherwise idle camera. |
+| Assisted voice and camera ownership | Chat continues while local assisted scanning; model camera requests are unavailable. Stop chat keeps the explicitly started scanner active. Stop scanning releases an otherwise idle camera. Express pauses chat instead. |
 | Privacy | No ticket keys or guest names in telemetry. Next guest, expiry and shutdown clear the current ticket. |
 
 Run the automated decoder, API contract, cancellation and dashboard endpoint checks with:
 
 ```sh
-uv run pytest app/tests/unit/test_event_checkin.py app/tests/unit/test_model_vision.py -q
+uv run pytest app/tests/unit/test_event_checkin.py app/tests/unit/test_luma_express.py app/tests/unit/test_configure_luma.py app/tests/unit/test_model_vision.py -q
 ```
 
 ## Boundaries and API evidence
@@ -56,13 +90,16 @@ Checked against Luma's published documentation and OpenAPI schema on 2026-10-30:
 - [Official check-in workflow](https://help.luma.com/p/check-in) records attendance using Standard or Express mode. The dashboard hands off to that supported UI, rather than reverse-engineering a session-cookie endpoint.
 - [API setup](https://docs.luma.com/reference/getting-started-with-your-api) describes calendar API access. Registration approval is a different operation and must not be used as a check-in substitute.
 
-Fully unattended scan-to-check-in remains dependent on a supported Luma attendance-write integration.
-Do not claim the current handoff is automatic. Reachy's cloud model has no ticket, guest-list or attendance
-write tool, and event check-in has no connection to the door controller.
+Automatic single-ticket admission is performed by Luma's Express scanner. The custom local decoder still
+has no direct attendance-write API; its assisted mode still needs confirmation in Luma. Group-ticket
+selection remains an operator action in either workflow. Reachy's cloud model has no ticket, guest-list
+or attendance write tool, and event check-in has no connection to the door controller.
 
-Ticket URLs are bearer-like secrets. The runtime retains only the current lookup in memory (five-minute
+In assisted mode, ticket URLs are bearer-like secrets. The runtime retains only the current lookup in memory (five-minute
 expiry), sends it only to the fixed Luma API origin or the operator-opened Luma page, and uses no-store
 responses and no-referrer links. It does not retain frames or guest lists. Luma's browser tab/history can
 retain its URL, so use an operator-controlled browser and close ticket tabs after use. While scanning,
 model image uploads are blocked, including images waiting for the socket. Normal attended image requests
 resume after scanning stops.
+
+In Express Mode, Luma's browser page owns camera access and handles tickets under its own policies. Reachy's app does not receive or archive those frames or guest records.

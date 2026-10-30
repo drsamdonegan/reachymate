@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 
 from app.services.reachy.motion.commands import RobotMotionRequest
 
@@ -28,6 +28,36 @@ class EventScan(BaseModel):
 
 class EventVerification(BaseModel):
     scan_id: str = Field(min_length=1, max_length=64)
+
+
+class CameraReturn(BaseModel):
+    scanner_closed: StrictBool
+
+
+def require_dashboard_origin(request: Request) -> None:
+    origin = request.headers.get("origin")
+    if origin is not None and origin != str(request.base_url).rstrip("/"):
+        raise HTTPException(403, "Use the local Reachy dashboard for camera handoff")
+
+
+@router.post("/event-checkin/express/start")
+async def luma_express_start(request: Request):
+    require_dashboard_origin(request)
+    try:
+        return private_result(await get_ctx(request).start_luma_express())
+    except (ValueError, OSError) as exc:
+        message = str(exc) if isinstance(exc, ValueError) else "Could not save the camera handoff state"
+        raise HTTPException(409, message) from None
+
+
+@router.post("/event-checkin/express/finish")
+async def luma_express_finish(request: Request, payload: CameraReturn):
+    require_dashboard_origin(request)
+    try:
+        return private_result(await get_ctx(request).finish_luma_express(payload.scanner_closed))
+    except (ValueError, OSError) as exc:
+        message = str(exc) if isinstance(exc, ValueError) else "Could not clear the camera handoff state"
+        raise HTTPException(409, message) from None
 
 
 def private_result(value):

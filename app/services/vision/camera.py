@@ -6,6 +6,7 @@ import asyncio
 import io
 import logging
 import platform
+import threading
 from typing import Any, Protocol
 
 import numpy as np
@@ -31,10 +32,12 @@ class SimulationCameraAdapter:
         self.settings = settings
         self.telemetry = telemetry
         self._capture: Any | None = None
+        self._capture_lock = threading.RLock()
+        self.external_owner = False
         self._frame = self._build_placeholder_frame()
 
     async def start(self) -> None:
-        if not self.settings.simulation_use_webcam:
+        if self.external_owner or not self.settings.simulation_use_webcam:
             return
         try:
             import cv2
@@ -45,16 +48,34 @@ class SimulationCameraAdapter:
             self._capture = None
 
     async def stop(self) -> None:
+        await asyncio.to_thread(self._stop_capture)
+
+    def _stop_capture(self) -> None:
+        with self._capture_lock:
+            self._release_capture()
+
+    def _release_capture(self) -> None:
         if self._capture is not None:
             self._capture.release()
             self._capture = None
 
+    def set_external_owner(self, enabled: bool) -> None:
+        # Wait for any in-flight frame read before releasing the device. All callers
+        # (preview, detection, model snapshots, identification) share this guard.
+        with self._capture_lock:
+            self.external_owner = enabled
+            if enabled:
+                self._release_capture()
+
     def get_frame(self) -> np.ndarray | None:
-        if self._capture is not None:
-            ok, frame = self._capture.read()
-            if ok:
-                self._frame = frame
-        return None if self._frame is None else self._frame.copy()
+        with self._capture_lock:
+            if self.external_owner:
+                return None
+            if self._capture is not None:
+                ok, frame = self._capture.read()
+                if ok:
+                    self._frame = frame
+            return None if self._frame is None else self._frame.copy()
 
     def get_snapshot_bytes(self) -> bytes | None:
         frame = self.get_frame()
@@ -89,13 +110,19 @@ class ReachyCameraAdapter(SimulationCameraAdapter):
     async def stop(self) -> None:
         return None
 
+    def _release_capture(self) -> None:
+        self.media.release_idle_camera()
+
     def get_frame(self) -> np.ndarray | None:
-        try:
-            frame = self.media.get_frame()
-        except Exception:
-            logger.debug("Reachy frame fetch failed", exc_info=True)
-            return None
-        return None if frame is None else frame.copy()
+        with self._capture_lock:
+            if self.external_owner:
+                return None
+            try:
+                frame = self.media.get_frame()
+            except Exception:
+                logger.debug("Reachy frame fetch failed", exc_info=True)
+                return None
+            return None if frame is None else frame.copy()
 
 
 class PinnedLocalCameraAdapter:

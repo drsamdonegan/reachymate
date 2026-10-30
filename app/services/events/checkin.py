@@ -23,11 +23,13 @@ class EventCheckin:
         camera_allowed=lambda: True,
         on_confirmed=None,
         on_scanner_stop=None,
+        external_mode=lambda: {"active": False},
     ):
         self.camera, self.client, self.telemetry = camera, client, telemetry
         self.camera_name = camera_name
         self.camera_allowed, self.on_confirmed = camera_allowed, on_confirmed
         self.on_scanner_stop = on_scanner_stop
+        self.external_mode = external_mode
         self.decoder = QRDecoder()
         self.scanning = False
         self.event = None
@@ -48,6 +50,7 @@ class EventCheckin:
         self._expire()
         return {
             "scanning": self.scanning,
+            "express": self.external_mode(),
             "camera_source": self.camera_name,
             "event": deepcopy(self.event),
             "current": deepcopy(self.current),
@@ -64,12 +67,15 @@ class EventCheckin:
             self._seen.clear()
 
     async def select_event(self, event_id):
+        self._require_local_mode()
         if not EVENT_ID.fullmatch(event_id):
             raise ValueError("Use a Luma event ID beginning evt-")
         async with self._lock:
+            self._require_local_mode()
             event = {"id": event_id, "name": "Luma event"}
             if self.client.configured:
                 event = await self.client.event(event_id)
+            self._require_local_mode()
             await self.stop_scanning()
             self._generation += 1
             self.current = self._code = self._guest_id = None
@@ -82,6 +88,7 @@ class EventCheckin:
 
     async def start_scanning(self):
         async with self._control_lock:
+            self._require_local_mode()
             if not self.event:
                 raise ValueError("Select an event first")
             if not self.camera_allowed():
@@ -152,6 +159,7 @@ class EventCheckin:
 
     async def scan(self, value):
         async with self._lock:
+            self._require_local_mode()
             self._expire()
             if not self.event:
                 raise ValueError("Select an event first")
@@ -199,6 +207,7 @@ class EventCheckin:
 
     async def verify(self, scan_id):
         async with self._lock:
+            self._require_local_mode()
             self._expire()
             if not self.current or self.current["scan_id"] != scan_id:
                 raise ValueError("This scan expired; scan the ticket again")
@@ -243,8 +252,14 @@ class EventCheckin:
                 except Exception:
                     self.error = "Check-in confirmed; spoken welcome unavailable"
 
-    async def next_guest(self):
+    def _require_local_mode(self):
+        if self.external_mode().get("active"):
+            raise ValueError("Close Luma's scanner and return the camera before using the assisted scanner")
+
+    async def next_guest(self, *, clear_for_handoff=False):
         async with self._lock:
+            if not clear_for_handoff:
+                self._require_local_mode()
             self._generation += 1
             self.current = self._code = self._guest_id = None
             self.error = None

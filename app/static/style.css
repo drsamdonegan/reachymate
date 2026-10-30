@@ -103,6 +103,10 @@ button:disabled { opacity: 0.45; cursor: default; }
 #event-checkin-panel .inline input { flex: 1; min-width: 180px; }
 #event-scan-result { min-height: 60px; max-height: 150px; }
 #event-checkin-error { color: var(--danger); }
+#event-express-error { color: var(--danger); }
+#event-express-error:empty { display: none; }
+#event-express-status { min-height: 60px; max-height: 150px; }
+#event-express-reopen { color: var(--accent); font-weight: 600; }
 #event-luma-checkin { color: var(--accent); font-weight: 600; }
 #event-tickets:empty, #event-checkin-error:empty { display: none; }
 @media (max-width: 640px) {

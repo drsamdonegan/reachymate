@@ -30,6 +30,8 @@ Admin routes are disabled unless `ALLOW_DEV_ENDPOINTS=true` and are never regist
 
 Connect USB, turn on external power, then double-click **[Start Reachy.command](Start%20Reachy.command)** in Finder. It starts or reuses the local no-media daemon, booking/front-desk mocks and GPT-Live app, connects chat, and opens the existing dashboard at **http://127.0.0.1:8080/**. Reopening that dashboard starts chat once when stopped. **Stop chat** stays stopped while the page remains open. Closing a browser tab or the launcher Terminal leaves services running; chat still has its ten-minute cap.
 
+During a Luma camera handoff, reopening the dashboard or launcher keeps chat paused until you close Luma's scanner and explicitly return the camera.
+
 Camera and microphone permissions must be granted to Terminal. This launcher uses the existing `.venv`, `.env` and provisioned assets; it never installs packages or changes system login settings. Startup logs are private under `.codex-runtime-logs/launcher-*.log`. Repeated launches reuse healthy services; conflicting ports, missing power or a failed dependency produce a diagnostic instead of starting duplicate hardware owners.
 
 The same launcher is available from a terminal:
@@ -59,11 +61,13 @@ The same dashboard includes look, gesture, dance, expression and numeric pose co
 
 ## Verification
 
-The existing dashboard also includes [Luma event check-in](docs/event-checkin.md). Start its QR scanner,
-show a ticket to Reachy's camera, then open **Complete check-in in Luma** to record attendance in Luma's
-signed-in page. With a private calendar API key, **Verify Luma check-in** reads back individual ticket
-timestamps. QR scanning is local; model image uploads pause during scanning. This is an assisted check-in
-flow: the published Luma API currently has no attendance-write endpoint.
+The existing dashboard also includes [Luma event check-in](docs/event-checkin.md). **Open automatic Luma
+check-in** pauses Reachy's voice/camera features and opens Luma's official Express scanner using his USB
+camera. Confirm **Reachy Mini Camera** and **Express Mode On** once in the browser; valid single-ticket
+guests then check in without per-person clicks or an API key. Group tickets still need selection. Close
+all Luma scanner tabs and return the camera from the dashboard before resuming chat. The handoff survives
+restarts. The original assisted local scanner and optional API verification remain available. Use
+**Configure Luma.command** for masked local key entry if verification is wanted.
 
 ```sh
 uv run pytest app/tests -q

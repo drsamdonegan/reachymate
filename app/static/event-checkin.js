@@ -3,6 +3,7 @@
   let currentScan = null;
   let refreshing = false;
   let revision = 0;
+  let handoffPending = false;
   const labels = {
     unverified: 'Ticket scanned. Complete check-in in Luma; attendance is not verified here yet.',
     awaiting_luma: 'Ticket found. Complete check-in in Luma, then verify below.',
@@ -11,11 +12,29 @@
     not_approved: 'Registration or ticket is not approved. Ask event staff for help.',
   };
   function render(data) {
+    const express = data.express || {};
+    const external = !!express.active;
     currentScan = data.current?.scan_id || null;
-    element('event-scanner-status').textContent = data.scanning
+    element('event-scanner-status').textContent = external ? 'Camera reserved for Luma' : data.scanning
       ? `Scanning · ${data.camera_source} · ${Math.ceil(data.remaining_seconds / 60)} min left` : 'Scanner off';
-    element('event-scan-start').disabled = !data.event || data.scanning;
+    element('event-scan-start').disabled = !data.event || data.scanning || external;
     element('event-scan-stop').disabled = !data.scanning;
+    element('event-next').disabled = external;
+    element('event-select-submit').disabled = external;
+    element('luma-event-id').disabled = external;
+    element('event-qr-code').disabled = external;
+    element('event-express-start').disabled = !data.event || handoffPending;
+    element('event-express-start').textContent = external ? 'Prepare and open Luma again' : 'Open automatic Luma check-in';
+    element('event-express-finish').hidden = !external;
+    const reopen = element('event-express-reopen');
+    reopen.hidden = !external || !express.camera_released || !express.url;
+    if (!reopen.hidden) reopen.href = express.url;
+    else reopen.removeAttribute('href');
+    element('event-express-status').textContent = external
+      ? express.camera_released
+        ? 'Reachy has released the camera and paused chat. In Luma, confirm Reachy Mini Camera and Express Mode. Check-in results appear there.'
+        : 'A Luma handoff is reserved or was recovered after restart. Prepare and open Luma again, or close its scanner and return the camera.'
+      : 'Opening Luma pauses Reachy’s voice and camera features. Hold each guest’s QR code in front of Reachy; Luma records valid single-ticket arrivals automatically in Express Mode.';
     if (document.activeElement !== element('luma-event-id')) element('luma-event-id').value = data.event?.id || '';
     element('luma-event-name').textContent = data.event ? `${data.event.name} · ${data.event.id}` : '';
     element('event-verification-notice').textContent = data.verification_available
@@ -36,7 +55,7 @@
     link.hidden = !data.current?.checkin_url || data.current.status === 'not_approved';
     if (!link.hidden) link.href = data.current.checkin_url;
     else link.removeAttribute('href');
-    element('event-verify').disabled = !currentScan || !data.verification_available;
+    element('event-verify').disabled = !currentScan || !data.verification_available || external;
   }
   async function request(action = '', body) {
     if (action) revision += 1;
@@ -49,6 +68,7 @@
     const data = await response.json();
     if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Could not process the ticket.');
     if (requestRevision === revision) render(data);
+    return data;
   }
   async function action(name, body) {
     try { await request(name, body); }
@@ -69,6 +89,36 @@
   element('event-scan-stop').addEventListener('click', () => action('stop'));
   element('event-next').addEventListener('click', () => action('next'));
   element('event-verify').addEventListener('click', () => action('verify', {scan_id: currentScan}));
+  element('event-express-start').addEventListener('click', async () => {
+    if (handoffPending) return;
+    // Open on the user's click, before the asynchronous camera handoff, to avoid popup blocking.
+    const scanner = window.open('about:blank', '_blank');
+    if (!scanner) {
+      element('event-express-error').textContent = 'Allow this dashboard to open a Luma tab, then try again. Reachy has not changed modes.';
+      return;
+    }
+    scanner.opener = null;
+    handoffPending = true;
+    element('event-express-start').disabled = true;
+    element('event-express-error').textContent = '';
+    try {
+      const data = await request('express/start');
+      if (!data.express?.camera_released || !data.express.url) throw new Error('Camera handoff is not ready.');
+      scanner.location.replace(data.express.url);
+    } catch (error) {
+      scanner.close();
+      element('event-express-error').textContent = error.message;
+      await refresh();
+    } finally {
+      handoffPending = false;
+      await refresh();
+    }
+  });
+  element('event-express-finish').addEventListener('click', async () => {
+    element('event-express-error').textContent = '';
+    try { await request('express/finish', {scanner_closed: true}); }
+    catch (error) { element('event-express-error').textContent = error.message; }
+  });
   // Read-only status polling never records attendance or automatically opens third-party pages.
   async function refresh() {
     if (refreshing) return;

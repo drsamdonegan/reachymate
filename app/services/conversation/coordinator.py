@@ -64,6 +64,7 @@ class ConversationCoordinator:
         self._last_activity = 0.0
         self._local_only_until = 0.0
         self._wake_lock = asyncio.Lock()
+        self.suspended = False
         self._track_ref: str | None = None
         self._pending_track_ref: str | None = None
         self._track_changed_at: float | None = None
@@ -81,7 +82,8 @@ class ConversationCoordinator:
     def diagnostics(self) -> dict[str, Any]:
         return {
             "attended_available": self.settings.attended_chat_enabled,
-            "dashboard_auto_start": self.settings.dashboard_auto_chat,
+            "dashboard_auto_start": self.settings.dashboard_auto_chat and not self.suspended,
+            "pause_reason": "luma_express" if self.suspended else None,
             "max_seconds": self.settings.attended_chat_max_seconds,
             "mode": "attended_chat" if self.attended_chat_active else "concierge",
             "remaining_seconds": round(max(0, self._attended_until - time.monotonic()))
@@ -91,6 +93,8 @@ class ConversationCoordinator:
 
     async def handle_wake(self, *, attended: bool = False) -> None:
         async with self._wake_lock:
+            if self.suspended:
+                return
             if getattr(self.state_machine, "state", None) == AppState.SAFE_HOLD:
                 return
             if attended and not self.settings.attended_chat_enabled:
@@ -182,6 +186,8 @@ class ConversationCoordinator:
         return self.realtime.feed_audio(chunk)
 
     async def request_access_check(self) -> dict[str, Any]:
+        if self.suspended:
+            return {"status": "unavailable"}
         if not self._engaged:
             return {"status": "unavailable"}
         if self._routed:
@@ -203,6 +209,8 @@ class ConversationCoordinator:
         }
 
     async def handle_command(self, command: CommandIntent) -> None:
+        if self.suspended:
+            return
         if command == CommandIntent.CANCEL:
             await self._end_visitor(reason="visitor_cancelled")
             return
@@ -257,6 +265,12 @@ class ConversationCoordinator:
         self.guard.end_engagement()
         if self.realtime is not None:
             await self.realtime.stop(reason="runtime_shutdown")
+
+    async def suspend(self) -> None:
+        self.suspended = True
+        # Finish a wake already in progress, then stop it; later wakes cannot reconnect.
+        async with self._wake_lock:
+            await self.stop()
 
     async def mark_routed(self) -> None:
         """Routing commits this visitor to the path with no biometric capture."""
