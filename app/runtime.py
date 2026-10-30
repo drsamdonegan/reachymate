@@ -1424,6 +1424,10 @@ class AppContext:
 
         while self.state_machine.state == AppState.SAFE_HOLD:
             await asyncio.sleep(60)
+            # A USB fault must not reopen audio or reset the shared device while
+            # Chrome owns the camera. The operator must recover the handoff first.
+            if self.luma_express.active:
+                continue
             permissions = await asyncio.to_thread(permission_status)
             if any(permissions.get(name) in {"denied", "restricted"} for name in ("camera", "microphone")):
                 continue

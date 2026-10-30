@@ -37,6 +37,11 @@ Luma's independent browser scanner. Close it yourself when stopping admission. A
 If setup fails partway through, chat stays paused. Retry **Prepare and open Luma again**, or close any
 scanner tabs and return the camera. A failed camera handoff never opens the scanner automatically.
 
+If USB is unplugged, Chrome's old stream can stop even after reconnection. Reconnect USB and external
+power, restart the Reachy app if it entered a hardware fault, then prepare the handoff again. Reload Luma,
+confirm the Reachy camera and re-enable Express Mode. While the handoff is active, hardware-fault recovery
+does not restart audio or reset USB underneath Chrome's scanner.
+
 ## Optional assisted scanner setup
 
 1. Install the existing `vision` extra (`uv sync --frozen --extra vision --extra audio --extra reachy --extra skills --extra dev`). QR decoding uses OpenCV; no separate scanner hardware is needed.

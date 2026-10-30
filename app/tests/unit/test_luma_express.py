@@ -159,6 +159,32 @@ async def test_failed_microphone_resume_keeps_handoff_paused_and_recoverable(set
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("external_camera", [True, False])
+async def test_fault_recovery_respects_browser_camera_ownership(monkeypatch, external_camera):
+    ctx = SimpleNamespace(
+        luma_express=SimpleNamespace(active=external_camera),
+        state_machine=SimpleNamespace(state=AppState.SAFE_HOLD, boot=AsyncMock()),
+        reachy_media=SimpleNamespace(restart_streams=AsyncMock()),
+        robot=SimpleNamespace(
+            daemon=SimpleNamespace(
+                app_lock=Mock(return_value={"state": "free"}),
+                motors=Mock(return_value={"mode": "disabled"}),
+            ),
+            park=AsyncMock(),
+            power=SimpleNamespace(parked=True),
+        ),
+        audio_router=SimpleNamespace(heartbeat=SimpleNamespace(healthy=lambda: True)),
+    )
+    monkeypatch.setattr("app.runtime.asyncio.sleep", AsyncMock(side_effect=[None, asyncio.CancelledError()]))
+    monkeypatch.setattr("app.services.system.tcc.permission_status", lambda: {})
+    with pytest.raises(asyncio.CancelledError):
+        await AppContext._recover_safe_hold(ctx)
+    assert ctx.reachy_media.restart_streams.await_count == (0 if external_camera else 1)
+    assert ctx.robot.park.await_count == (0 if external_camera else 1)
+    assert ctx.state_machine.boot.await_count == (0 if external_camera else 1)
+
+
+@pytest.mark.asyncio
 async def test_hardware_fault_cannot_open_express_or_move_robot(settings):
     ctx = AppContext(settings=settings)
     ctx.event_checkin.event = {"id": "evt-demo", "name": "Demo"}
