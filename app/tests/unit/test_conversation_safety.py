@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -49,6 +50,97 @@ class State:
 
     async def handle_command(self, command):
         return None
+
+
+@pytest.mark.asyncio
+async def test_attended_chat_survives_camera_loss_and_silence_but_expires(settings):
+    settings.attended_chat_enabled = True
+    guard = BargeInGuard(0)
+    closed = []
+    coordinator = ConversationCoordinator(
+        settings=settings,
+        guard=guard,
+        state_machine=State(),
+        realtime=None,
+        system_health=SimpleNamespace(set_status=lambda *args: None),
+        person_in_view=lambda: False,
+    )
+    coordinator.on_idle = lambda: closed.append(True)
+    try:
+        await coordinator.handle_wake(attended=True)
+        coordinator._last_activity = time.monotonic() - 60
+        coordinator._track_lost_at = time.monotonic() - 10
+        await asyncio.sleep(0.3)
+        assert coordinator.attended_chat_active and guard.is_engaged()
+        assert not closed
+        # Broader conversational audio is never biometric consent.
+        assert (await coordinator.request_access_check())["status"] == "no_person_in_view"
+        coordinator._attended_until = time.monotonic() - 1
+        async with asyncio.timeout(2):
+            while not closed:
+                await asyncio.sleep(0.01)
+        assert not coordinator.attended_chat_active and not guard.is_engaged()
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.asyncio
+async def test_normal_wake_keeps_face_departure_boundary_even_on_chat_bench(settings):
+    settings.attended_chat_enabled = True
+    closed = asyncio.Event()
+    coordinator = ConversationCoordinator(
+        settings=settings,
+        guard=BargeInGuard(0),
+        state_machine=State(),
+        realtime=None,
+        system_health=SimpleNamespace(set_status=lambda *args: None),
+        on_idle=closed.set,
+    )
+    try:
+        await coordinator.handle_wake()
+        coordinator._track_lost_at = time.monotonic() - 10
+        await asyncio.wait_for(closed.wait(), 2)
+        assert not coordinator.attended_chat_active and not coordinator.guard.is_engaged()
+    finally:
+        await coordinator.stop()
+
+
+@pytest.mark.parametrize("profile", ["production", "simulation", "test"])
+def test_attended_chat_is_rejected_outside_staging(profile):
+    from app.config import Settings
+
+    with pytest.raises(ValueError, match="Attended chat requires"):
+        Settings(_env_file=None, app_env=profile, attended_chat_enabled=True)
+
+
+@pytest.mark.asyncio
+async def test_operator_can_retry_failed_live_session_and_stop_without_waiting_for_idle(settings):
+    from app.tests.unit.test_live_session import session_fixture
+
+    settings.attended_chat_enabled = True
+    session, wire, _, _ = session_fixture(settings)
+    coordinator = ConversationCoordinator(
+        settings=settings,
+        guard=BargeInGuard(0),
+        state_machine=State(),
+        realtime=session,
+        system_health=SimpleNamespace(set_status=lambda *args: None),
+    )
+    session.on_closed = coordinator.on_realtime_closed
+    session.idle_timeout_paused = lambda: coordinator.attended_chat_active
+    try:
+        await coordinator.handle_wake(attended=True)
+        await session.stop(reason="connection_error")
+        assert coordinator._local_only_until > time.monotonic()
+        await coordinator.handle_wake(attended=True)
+        assert session.running and coordinator.attended_chat_active
+        assert sum(e["type"] == "session.start" for e in wire.sent) == 2
+        await coordinator.handle_command(CommandIntent.CANCEL)
+        assert not session.running and not coordinator.guard.is_engaged()
+        assert not coordinator.attended_chat_active
+        assert coordinator._heartbeat_task.done()
+    finally:
+        await coordinator.stop()
 
 
 @pytest.mark.asyncio

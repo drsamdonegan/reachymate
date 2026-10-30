@@ -51,6 +51,9 @@ class AudioRouter:
         on_track_changed=None,
         on_barge_in=None,
         barge_in_allowed=None,
+        attended_chat_supplier=None,
+        recovery_allowed=None,
+        on_recovery_blocked=None,
     ) -> None:
         self.settings, self.microphone, self.vad, self.wakeword, self.asr = (
             settings,
@@ -67,6 +70,9 @@ class AudioRouter:
         self.attention_supplier, self.doa_supplier = attention_supplier, doa_supplier
         self.on_activity, self.on_fault, self.on_track_changed = on_activity, on_fault, on_track_changed
         self.on_barge_in, self.barge_in_allowed = on_barge_in, barge_in_allowed
+        self.attended_chat_supplier = attended_chat_supplier or (lambda: False)
+        self.recovery_allowed = recovery_allowed or (lambda: True)
+        self.on_recovery_blocked = on_recovery_blocked
         self._barge_speech_seconds = 0.0
         self._barge_latched = False
         self._task = None
@@ -104,9 +110,10 @@ class AudioRouter:
         self._running = False
         await self._supervisor.stop()
         self._task = None
-        for task in tuple(self._callback_tasks):
+        tasks = tuple(task for task in self._callback_tasks if task is not asyncio.current_task())
+        for task in tasks:
             task.cancel()
-        await asyncio.gather(*self._callback_tasks, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
         self._callback_tasks.clear()
         await self.microphone.stop()
         if self._executor:
@@ -126,6 +133,13 @@ class AudioRouter:
 
     async def _recover(self, reason: str) -> None:
         self.telemetry.publish("audio", {"event": "audio_failed", "reason": reason})
+        if not self.recovery_allowed():
+            # Stop the supervisor rather than resetting the USB device shared with
+            # the browser camera. Cleanup runs outside this supervisor task.
+            self._running = False
+            if self.on_recovery_blocked:
+                self.on_recovery_blocked()
+            raise asyncio.CancelledError
         media = getattr(self.microphone, "media", self.microphone)
         restart = getattr(media, "restart_streams", None)
         try:
@@ -184,11 +198,17 @@ class AudioRouter:
                 "engaged": engaged,
             }
             if engaged:
+                attended = self.attended_chat_supplier()
                 face = self.attention_supplier() if self.attention_supplier else None
                 doa = self.doa_supplier() if self.doa_supplier else None
                 result = self.av_gate.process(chunk, vad_score=vad_score, face=face, doa=doa)
                 self._last_diag.update(
-                    {"gate_open": result.opened, "gate_reason": result.reason, "r2_degraded": result.degraded}
+                    {
+                        "gate_open": attended or result.opened,
+                        "gate_reason": "attended_chat" if attended else result.reason,
+                        "speaker_gate_reason": result.reason,
+                        "r2_degraded": result.degraded,
+                    }
                 )
                 if self.on_track_changed:
                     fresh_track = (
@@ -199,9 +219,12 @@ class AudioRouter:
                         await update
                 self._last_track = face.track_id if face is not None else None
                 if self.on_engaged_audio:
-                    for gated in result.chunks:
+                    # An explicitly started bench chat streams the echo-cancelled
+                    # mic continuously. Access/cancel grammar below still uses
+                    # the face/direction gate and local consent checks.
+                    for gated in (chunk,) if attended else result.chunks:
                         self.on_engaged_audio(gated)
-                if result.opened and vad_score >= self.settings.vad_threshold:
+                if (attended or result.opened) and vad_score >= self.settings.vad_threshold:
                     self._wakes.clear()  # Storms count only wakes with no visitor turn.
                     if self.on_activity:
                         activity = self.on_activity()

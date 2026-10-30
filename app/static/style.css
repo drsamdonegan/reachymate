@@ -98,13 +98,39 @@ button:hover {
   opacity: 0.92;
 }
 
-input {
+button:disabled { opacity: 0.45; cursor: default; }
+#event-checkin-panel { margin-bottom: 20px; }
+#event-checkin-panel .inline input { flex: 1; min-width: 180px; }
+#event-scan-result { min-height: 60px; max-height: 150px; }
+#event-checkin-error { color: var(--danger); }
+#event-express-error { color: var(--danger); }
+#event-express-error:empty { display: none; }
+#event-express-status { min-height: 60px; max-height: 150px; }
+#event-express-reopen { color: var(--accent); font-weight: 600; }
+#event-host-controls { border-top: 1px solid var(--line); padding-top: 8px; }
+#event-host-form { margin-bottom: 12px; }
+#event-host-form button { justify-self: start; }
+#event-host-controls > .inline { justify-content: flex-start; }
+#event-host-status { min-height: 60px; max-height: 150px; }
+#event-luma-checkin { color: var(--accent); font-weight: 600; }
+#event-tickets:empty, #event-checkin-error:empty { display: none; }
+@media (max-width: 640px) {
+  #event-checkin-panel .panel-head { align-items: flex-start; flex-direction: column; }
+}
+
+input, select {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 12px 14px;
   background: white;
 }
+
+.inline.wrap { flex-wrap: wrap; justify-content: flex-start; }
+.inline select { flex: 1; min-width: 150px; }
+button.danger { background: var(--danger); }
+details { margin: 18px 0; }
+summary { cursor: pointer; font-weight: 600; }
 
 #camera-feed {
   width: 100%;
@@ -129,6 +155,8 @@ input {
   padding: 10px 12px;
   border-bottom: 1px solid rgba(212, 221, 229, 0.55);
 }
+
+#greeter-status { min-height: 0; }
 
 .feed-entry:last-child, .event-card:last-child {
   border-bottom: 0;

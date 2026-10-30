@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from app.config import Settings
 from app.models.domain import FaceMatchResult
-from app.models.enums import AppState, HealthStatus
+from app.models.enums import AppState, CommandIntent, HealthStatus, RuntimeMode
 from app.services.audio.asr import CommandRecognizer
 from app.services.audio.audio_router import AudioRouter
 from app.services.audio.barge_in_guard import BargeInGuard
@@ -27,7 +27,11 @@ from app.services.audio.wakeword import WakeWordDetector
 from app.services.audio.xvf import XvfController
 from app.services.conversation import ConversationCoordinator
 from app.services.door import PlaceholderDoorAction
+from app.services.events.checkin import EventCheckin
+from app.services.events.express import LumaExpressHandoff
+from app.services.events.luma import LumaClient
 from app.services.knowledge import PublicKnowledgeClient
+from app.services.live import OpenAIGptLiveSession
 from app.services.policy.decision_engine import DecisionEngine
 from app.services.reachy.daemon_supervisor import DaemonSupervisor
 from app.services.reachy.media import ReachyMediaAdapter
@@ -46,11 +50,14 @@ from app.services.system.key_provider import BackendKeyProvider
 from app.services.system.telemetry import TelemetryBroker
 from app.services.vision.attention import AttentionService, CameraCalibration
 from app.services.vision.av_gate import AVGate, MouthActivity
+from app.services.vision.browser_camera import BrowserCameraBridge
 from app.services.vision.camera import ReachyCameraAdapter, SimulationCameraAdapter
 from app.services.vision.enrollment import EnrollmentService
 from app.services.vision.face_detect import YuNetFaceDetector
 from app.services.vision.face_embed import SFaceEmbedder
 from app.services.vision.face_match import FaceMatcher, IdentificationService
+from app.services.vision.greeter import EventGreeter, visual_target
+from app.services.vision.model_view import ModelCameraView, capture_model_view
 from app.services.vision.pose import FacePoseEstimator
 from app.state_machine import OfficeBouncerStateMachine
 from app.storage.db import create_session_factory, init_db, session_scope
@@ -254,12 +261,41 @@ class AppContext:
         self.microphone = microphone or self.reachy_media or self._build_microphone()
         self.robot = robot or self._build_robot()
         self.camera = camera or self._build_camera()
+        self.luma_express = LumaExpressHandoff(
+            settings.data_dir / "luma-browser-handoff.json" if settings.app_env != RuntimeMode.TEST else None
+        )
+        self.luma_express.host_greeting = settings.luma_host_greeting
+        self.browser_camera = BrowserCameraBridge()
+        self._event_mode_lock = asyncio.Lock()
+        self._host_fault_task: asyncio.Task | None = None
+        if self.luma_express.active:
+            self.camera.set_external_owner(True)
+        self.event_checkin = EventCheckin(
+            camera=self.camera,
+            camera_name=(
+                "Reachy Mini Camera" if isinstance(self.camera, ReachyCameraAdapter) else "Simulation camera"
+            ),
+            client=LumaClient(settings.luma_api_key),
+            telemetry=self.telemetry,
+            camera_allowed=self._event_camera_allowed,
+            on_confirmed=self._welcome_event_guest,
+            on_scanner_stop=self._release_event_camera,
+            external_mode=self.luma_express.snapshot,
+        )
+        if settings.luma_event_id:
+            from app.services.events.qr import EVENT_ID
+
+            if EVENT_ID.fullmatch(settings.luma_event_id):
+                self.event_checkin.event = {"id": settings.luma_event_id, "name": "Selected Luma event"}
+        if self.luma_express.active and self.luma_express.event_id:
+            self.event_checkin.event = {"id": self.luma_express.event_id, "name": "Luma scanner event"}
         self.access_disabled = False
         self._overlay_recovered_at = None
         self._local_models_ready = False
         self._routing_task = None
         self._idle_task = None
         self._safe_hold_task = None
+        self._hardware_fault_lock = asyncio.Lock()
         self._track_ref = str(uuid4())
 
         self.detector = YuNetFaceDetector(
@@ -296,8 +332,18 @@ class AppContext:
             detector=self.detector,
             calibration=calibration,
             on_face=self.robot.look_at_face,
+            uncalibrated_demo=settings.uncalibrated_conversation_demo,
         )
         self.attention.worker.on_fault = self._hardware_fault
+        self.greeter = EventGreeter(
+            observation=self.attention.latest,
+            follow=self._greeter_follow,
+            welcome=self._greeter_welcome,
+            visible=lambda: (
+                self.attention.enabled and time.monotonic() - self.attention.last_visible_face_at < 0.4
+            ),
+        )
+        self.greeter.greeting = settings.event_greeter_greeting
         if settings.mouth_landmarker_path and settings.mouth_landmarker_sha256:
             import hashlib
 
@@ -361,8 +407,9 @@ class AppContext:
         self.realtime = None
         if settings.realtime_enabled:
             if not isinstance(self.microphone, ReachyMediaAdapter):
-                raise RuntimeError("Realtime voice requires the shared Reachy media adapter")
-            self.realtime = OpenAIRealtimeSession(
+                raise RuntimeError("OpenAI voice requires the shared Reachy media adapter")
+            session_type = OpenAIGptLiveSession if settings.voice_api == "gpt_live" else OpenAIRealtimeSession
+            self.realtime = session_type(
                 settings=settings,
                 playback=self.microphone,
                 knowledge=self.public_knowledge,
@@ -384,10 +431,17 @@ class AppContext:
         )
         if self.realtime is not None:
             self.realtime.on_closed = self.conversation.on_realtime_closed
+            self.realtime.idle_timeout_paused = lambda: self.conversation.attended_chat_active
             self.realtime.registry.set_handler("route_visitor", self._route_visitor)
             self.realtime.registry.set_handler("notify_staff", self._notify_staff)
             self.realtime.registry.set_handler("get_visitor_request_status", self._visitor_status)
+            self.realtime.registry.set_handler("robot_motion", self._robot_motion)
+            if isinstance(self.realtime, OpenAIGptLiveSession) and settings.camera_vision_enabled:
+                self.realtime.registry.set_handler("inspect_camera", self._inspect_camera)
+                self.realtime.vision_snapshot_provider = self._capture_model_view
+                self.realtime.vision_allowed = self._model_vision_allowed
 
+        self.conversation.suspended = self.luma_express.active
         self.vad = VoiceActivityDetector(settings.vad_model_path, threshold=settings.vad_threshold)
         self.wakeword = WakeWordDetector(
             settings.wakeword_model_path,
@@ -425,9 +479,12 @@ class AppContext:
             doa_supplier=self.doa.latest if self.doa else lambda: None,
             on_activity=self.conversation.gated_activity,
             on_track_changed=self.conversation.update_engaged_track,
+            attended_chat_supplier=lambda: self.conversation.attended_chat_active,
+            recovery_allowed=lambda: not self.luma_express.active,
+            on_recovery_blocked=self._host_audio_fault,
             on_fault=self._hardware_fault,
             on_barge_in=self.realtime.cancel_response
-            if self.realtime and settings.local_barge_in_enabled
+            if self.realtime and settings.local_barge_in_enabled and settings.voice_api == "realtime"
             else None,
             barge_in_allowed=lambda: bool(
                 self.realtime and self.realtime.running and not self.realtime._input_suspended
@@ -453,7 +510,12 @@ class AppContext:
             await self.camera.start()
             camera_ready = self.camera.get_frame() is not None if self.reachy_media is None else False
             self.system_health.set_status(
-                "camera", HealthStatus.HEALTHY if camera_ready else HealthStatus.ERROR
+                "camera",
+                HealthStatus.DEGRADED
+                if self.luma_express.active
+                else HealthStatus.HEALTHY
+                if camera_ready
+                else HealthStatus.ERROR,
             )
             if self.reachy_media is not None:
                 self.reachy_media.release_idle_camera()
@@ -529,13 +591,9 @@ class AppContext:
                 "realtime", HealthStatus.HEALTHY if realtime_ready else HealthStatus.ERROR
             )
 
-            await self.audio_router.start()
+            if not self.luma_express.active:
+                await self._start_local_listening()
             await self.attention.start()
-            if self.doa:
-                try:
-                    await self.doa.start()
-                except Exception as exc:
-                    self.system_health.set_status("xvf", HealthStatus.DEGRADED, {"error": type(exc).__name__})
             audio_detail: dict[str, Any] = {}
             if self.reachy_media is not None:
                 media_audio = self.reachy_media.diagnostics()
@@ -564,7 +622,15 @@ class AppContext:
 
     async def stop(self) -> None:
         self._stopping = True
-        tasks = (self._routing_task, self._idle_task, self._safe_hold_task, self._health_task)
+        self.browser_camera.stop()
+        await self.greeter.stop()
+        tasks = (
+            self._routing_task,
+            self._idle_task,
+            self._safe_hold_task,
+            self._health_task,
+            self._host_fault_task,
+        )
         for task in tasks:
             if task and task is not asyncio.current_task():
                 task.cancel()
@@ -576,6 +642,7 @@ class AppContext:
                     return_exceptions=True,
                 )
                 components = [
+                    self.event_checkin,
                     self.daemon_supervisor,
                     self.attention,
                     self.doa,
@@ -678,6 +745,8 @@ class AppContext:
         }
 
     async def enroll(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.luma_express.active:
+            raise ValueError("Close Luma's scanner and return the camera before enrollment")
         if not self.sensitive_cipher.enabled:
             raise ValueError("Encrypted storage is required before enrollment")
         import hashlib
@@ -720,37 +789,425 @@ class AppContext:
         return result
 
     async def speak(self, text: str) -> None:
+        if self.luma_express.active and not self.luma_express.host_voice:
+            raise RuntimeError("Voice is paused for Luma Express")
         if self.realtime is None or not self.realtime.running:
             raise RuntimeError("No active voice session")
         await self.robot.speak(text)
 
-    async def start_voice_test(self) -> dict[str, Any]:
-        """Open the same wake-scoped Realtime path from the loopback diagnostics UI."""
+    def _event_camera_allowed(self) -> bool:
+        return (
+            not getattr(self, "_stopping", False)
+            and not self.luma_express.active
+            and not self.greeter.enabled
+            and self.state_machine.state != AppState.SAFE_HOLD
+            and not (self.realtime and self.realtime._input_suspended)
+        )
 
+    async def _release_event_camera(self) -> None:
+        if self.reachy_media and not self.attention.enabled:
+            await asyncio.to_thread(self.reachy_media.release_idle_camera)
+        if not getattr(self, "_stopping", False) and self.state_machine.state == AppState.IDLE:
+            if self._idle_task and self._idle_task is not asyncio.current_task():
+                self._idle_task.cancel()
+            self._idle_task = asyncio.create_task(self._park_after_idle())
+
+    async def _welcome_event_guest(self) -> None:
+        if self.realtime and self.realtime.running and not self.realtime._input_suspended:
+            await self.robot.speak("Your event check-in is confirmed. Welcome!")
+
+    async def _start_local_listening(self) -> None:
+        await self.audio_router.start()
+        if self.doa:
+            try:
+                await self.doa.start()
+            except Exception as exc:
+                self.system_health.set_status("xvf", HealthStatus.DEGRADED, {"error": type(exc).__name__})
+
+    async def start_luma_express(self) -> dict:
+        async with self._event_mode_lock:
+            if self.greeter.enabled:
+                raise ValueError("Stop the event greeter before handing the camera to Luma")
+            event = self.event_checkin.event
+            if not event:
+                raise ValueError("Select a Luma event first")
+            if self.state_machine.state == AppState.SAFE_HOLD or getattr(self, "_stopping", False):
+                raise ValueError("Resolve the hardware fault before handing off the camera")
+            if self.reachy_media and self.settings.reachy_media_backend != "lite_direct":
+                raise ValueError("Luma Express requires the direct USB camera backend")
+            if not callable(getattr(self.camera, "set_external_owner", None)):
+                raise ValueError("This camera does not support a browser handoff")
+            await self._stop_luma_host()
+            self.luma_express.begin(event["id"])
+            self.conversation.suspended = True
+            try:
+                await self.event_checkin.stop_scanning()
+                await self.conversation.suspend()
+                # Stop local capture and USB recovery too: a microphone reset must
+                # never interrupt the independent browser scanner during handoff.
+                await self.audio_router.stop()
+                if self.doa:
+                    await self.doa.stop()
+                speech = getattr(self.robot, "speech", None)
+                if speech:
+                    speech.drop_pending()
+                self.attention.set_enabled(False)
+                # Finishes any frame currently being read, then prevents every app camera consumer.
+                await asyncio.to_thread(self.camera.set_external_owner, True)
+                await self.event_checkin.next_guest(clear_for_handoff=True)
+                await self._cancel_idle_for_wake()
+                motion = getattr(self.robot, "motion", None)
+                if motion:
+                    motion.stop_expression()
+                wake = getattr(self.robot, "wake", None)
+                if wake:
+                    await wake(0.0)
+                if self.state_machine.state == AppState.SAFE_HOLD or getattr(self, "_stopping", False):
+                    raise RuntimeError("Hardware became unavailable")
+                await self.state_machine.transition(AppState.IDLE)
+                self.luma_express.ready = True
+                self.system_health.set_status("camera", HealthStatus.DEGRADED, {"mode": "luma_handoff"})
+                self.telemetry.publish("event_scanner_mode", {"mode": "luma_browser_handoff"})
+            except Exception:
+                # Leave the persisted guard active on partial failure. The browser may already
+                # own the camera from an earlier run; never reconnect voice automatically.
+                raise ValueError(
+                    "Luma handoff did not finish. Retry, or close Luma and return the camera"
+                ) from None
+        return self.event_checkin.snapshot()
+
+    async def finish_luma_express(self, scanner_closed: bool) -> dict:
+        if not scanner_closed:
+            raise ValueError("Close Luma's scanner tab before returning the camera")
+        async with self._event_mode_lock:
+            if not self.luma_express.active:
+                return self.event_checkin.snapshot()
+            await self._stop_luma_host()
+            try:
+                await self._start_local_listening()
+                await asyncio.to_thread(self.camera.set_external_owner, False)
+                await self.camera.start()
+                self.luma_express.finish()
+            except Exception:
+                await self.audio_router.stop()
+                if self.doa:
+                    await self.doa.stop()
+                await asyncio.to_thread(self.camera.set_external_owner, True)
+                raise ValueError(
+                    "Could not resume Reachy. Chat stays paused; check local audio and retry"
+                ) from None
+            self.conversation.suspended = False
+            await self._release_event_camera()
+            self.telemetry.publish("event_scanner_mode", {"mode": "reachy"})
+        return self.event_checkin.snapshot()
+
+    async def start_luma_host(self, greeting: str) -> dict:
+        greeting = " ".join(greeting.split())
+        if not greeting or len(greeting) > 300 or any(ord(c) < 32 for c in greeting):
+            raise ValueError("Enter a welcome of 1 to 300 characters")
+        async with self._event_mode_lock:
+            if not self.luma_express.active or not self.luma_express.ready:
+                raise ValueError("Prepare the Luma camera handoff before starting the host")
+            if self.state_machine.state == AppState.SAFE_HOLD or getattr(self, "_stopping", False):
+                raise ValueError("Resolve the hardware fault before starting the host")
+            if not isinstance(self.realtime, OpenAIGptLiveSession) or not self.settings.attended_chat_enabled:
+                raise ValueError("Event hosting requires GPT-Live and attended chat")
+            if self.luma_express.host_voice and self.realtime.running:
+                return self.event_checkin.snapshot()
+            await self._stop_luma_host()
+            self.luma_express.host_greeting = greeting
+            self.luma_express.host_error = None
+            self.luma_express.host_voice = True
+            self.conversation.event_host = True
+            self.conversation.host_connected = False
+            self.conversation.suspended = False
+            self.realtime.host_greeting = greeting
+            try:
+                # Voice needs audio only. DoA tracking and every camera consumer stay off.
+                await self.audio_router.start()
+                await self.conversation.handle_wake(attended=True)
+                if (
+                    not self.realtime.running
+                    or not self.audio_router._running
+                    or self.state_machine.state != AppState.ENGAGED
+                    or getattr(self, "_stopping", False)
+                ):
+                    raise RuntimeError("Host did not connect")
+                self.conversation.host_connected = True
+            except (Exception, asyncio.CancelledError) as exc:
+                self.luma_express.host_error = (
+                    "Could not start GPT-Live. Check audio and the OpenAI connection, then retry."
+                )
+                await self._stop_luma_host()
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
+                raise ValueError(self.luma_express.host_error) from None
+        return self.event_checkin.snapshot()
+
+    async def _stop_luma_host(self) -> None:
+        self.browser_camera.stop()
+        if not self.luma_express.host_voice:
+            return
+        self.conversation.suspended = True
+        await self.conversation.stop()
+        await self._end_engagement()
+
+    async def stop_luma_host(self) -> dict:
+        async with self._event_mode_lock:
+            await self._stop_luma_host()
+        return self.event_checkin.snapshot()
+
+    async def start_event_greeter(self, greeting: str | None = None) -> dict:
+        greeting = " ".join((greeting or self.settings.event_greeter_greeting).split())
+        if not greeting or len(greeting) > 300:
+            raise ValueError("Enter a welcome of 1 to 300 characters")
+        async with self._event_mode_lock:
+            if self.greeter.enabled:
+                return self.greeter.diagnostics()
+            if self.luma_express.active:
+                raise ValueError("Close Luma's scanner and return the camera first")
+            if self.state_machine.state == AppState.SAFE_HOLD or getattr(self, "_stopping", False):
+                raise ValueError("Resolve the robot fault before starting the greeter")
+            if not isinstance(self.realtime, OpenAIGptLiveSession) or not self.settings.attended_chat_enabled:
+                raise ValueError("The event greeter requires GPT-Live attended chat")
+            if self.attention.tracker is None:
+                raise ValueError("The face detector needs camera calibration or the demo profile")
+            await self.event_checkin.stop_scanning()
+            await self.conversation.stop()
+            await self._end_engagement()
+            self.conversation.event_greeter = True
+            self.conversation.suspended = False
+            self.attention.auto_tracking_enabled = False
+            self.realtime.greeter_greeting = greeting
+            try:
+                await self._start_local_listening()
+                await self.conversation.handle_wake(attended=True)
+                if not self.realtime.running or self.state_machine.state != AppState.ENGAGED:
+                    raise ValueError("GPT-Live did not connect")
+                # Confirm native camera access before enabling automatic movement/greetings.
+                if await asyncio.to_thread(self.camera.get_frame) is None:
+                    raise ValueError("Reachy's camera is unavailable")
+                await self.greeter.start(greeting)
+            except (Exception, asyncio.CancelledError):
+                await self._stop_event_greeter()
+                raise
+            return self.greeter.diagnostics()
+
+    async def _stop_event_greeter(self) -> None:
+        await self.greeter.stop()
+        self.conversation.event_greeter = False
+        self.attention.auto_tracking_enabled = True
+        if self.realtime:
+            self.realtime.greeter_greeting = None
+        await self.conversation.stop()
+        await self._end_engagement()
+
+    async def stop_event_greeter(self) -> dict:
+        async with self._event_mode_lock:
+            await self._stop_event_greeter()
+            return self.greeter.diagnostics()
+
+    async def _greeter_follow(self, bbox, elapsed: float) -> None:
+        if self.state_machine.state not in {AppState.IDLE, AppState.ENGAGED}:
+            return
+        motion = getattr(self.robot, "motion", None)
+        if motion:
+            calibration = self.attention.tracker.calibration
+            pose = visual_target(motion.frame().head, bbox, calibration.width, calibration.height, elapsed)
+            motion.set_tracking_target(pose, autonomous=True)
+
+    async def _greeter_welcome(self, greeting: str) -> bool:
+        if not self.greeter.enabled or not self.greeter.present:
+            return False
+        if not self.realtime.running:
+            await self.conversation.handle_wake(attended=True)
+            if not self.realtime.running:
+                raise RuntimeError("Voice connection unavailable")
+        # Let an existing reply finish instead of talking over it with a welcome.
+        async with asyncio.timeout(12):
+            await self.realtime.wait_response_finished()
+            while self.robot.is_speaking():
+                await asyncio.sleep(0.1)
+        if not self.greeter.enabled or not self.greeter.present:
+            return False
+        await self.robot.speak(greeting)
+        self.telemetry.publish("event_greeter", {"event": "welcome_requested"})
+        return True
+
+    async def welcome_luma_guest(self) -> dict:
+        if not self.luma_express.host_voice or not self.realtime or not self.realtime.running:
+            raise ValueError("Start the GPT-Live host first")
+        await self.robot.speak(self.luma_express.host_greeting)
+        return self.event_checkin.snapshot()
+
+    def _host_audio_fault(self) -> None:
+        if self._host_fault_task is None or self._host_fault_task.done():
+            self.luma_express.host_error = (
+                "Host audio stopped. Luma keeps the camera; check Reachy's USB audio and restart the host."
+            )
+            self._host_fault_task = asyncio.create_task(self.stop_luma_host(), name="luma-host-audio-stop")
+
+    async def start_voice_test(self) -> dict[str, Any]:
+        """Open the selected wake-scoped voice path from the loopback diagnostics UI."""
+
+        if self.luma_express.active:
+            raise RuntimeError("Close Luma's scanner and return the camera before starting chat")
         if self.realtime is None:
-            raise RuntimeError("Realtime voice is not enabled")
-        await self.conversation.handle_wake()
+            raise RuntimeError("OpenAI voice is not enabled")
+        await self.conversation.handle_wake(attended=self.settings.attended_chat_enabled)
         return self.realtime.diagnostics()
 
+    async def stop_voice_test(self) -> dict[str, str]:
+        if self.greeter.enabled:
+            await self.stop_event_greeter()
+            return {"status": "stopped"}
+        if self.luma_express.host_voice:
+            await self.stop_luma_host()
+            return {"status": "stopped"}
+        await self.conversation.handle_command(CommandIntent.CANCEL)
+        return {"status": "stopped"}
+
+    async def send_voice_request(self, text: str) -> dict[str, str]:
+        if self.luma_express.active and not self.luma_express.host_voice:
+            raise RuntimeError("Voice is paused for Luma Express")
+        if self.realtime is None or not self.realtime.running or self.realtime._input_suspended:
+            raise RuntimeError("Start a voice test and finish any local consent step first")
+        sender = getattr(self.realtime, "send_text", None)
+        if sender is None:
+            raise RuntimeError("Text requests require GPT-Live")
+        await sender(text)
+        return {"status": "sent"}
+
     def get_camera_snapshot(self) -> bytes | None:
-        try:
-            return self.camera.get_snapshot_bytes()
-        finally:
-            if self.reachy_media is not None:
-                self.reachy_media.release_idle_camera()
+        # Dashboard polling must not wake the dormant camera or repeatedly
+        # tear down the capture that the engagement tracker is using.
+        if self.luma_express.active:
+            return None
+        if self.reachy_media is not None and not self.attention.enabled and not self.event_checkin.scanning:
+            return None
+        return self.camera.get_snapshot_bytes()
 
     def audio_diagnostics(self) -> dict[str, Any]:
         diagnostics = self.audio_router.diagnostics()
+        diagnostics["conversation"] = self.conversation.diagnostics()
         if self.reachy_media is not None:
             diagnostics["reachy_media"] = self.reachy_media.diagnostics()
         if self.realtime is not None:
             diagnostics["realtime"] = self.realtime.diagnostics()
+            diagnostics["voice"] = diagnostics["realtime"]
+        observation = self.attention.latest()
+        diagnostics["attention"] = {
+            "enabled": self.attention.enabled,
+            "degraded_reason": self.attention.degraded_reason,
+            "face_present": observation is not None and observation.in_zone,
+        }
+        diagnostics["browser_camera"] = self.browser_camera.diagnostics()
+        diagnostics["greeter"] = {
+            **self.greeter.diagnostics(),
+            "auto_start": self.settings.dashboard_auto_greeter,
+            "unavailable_reason": (
+                "Robot fault. Check USB and external power, then reopen the Reachy launcher."
+                if self.state_machine.state == AppState.SAFE_HOLD
+                else None
+            ),
+        }
+        power = getattr(self.robot, "power", None)
+        if power:
+            diagnostics["power"] = {
+                "parked": power.parked,
+                "parking": power.parking,
+                "joint_sag_limit_radians": power.joint_sag_limit,
+                "bench_tolerance": self.settings.uncalibrated_conversation_demo,
+            }
+        motion = getattr(self.robot, "motion", None)
+        if motion:
+            diagnostics["motion"] = motion.expression_diagnostics()
         return diagnostics
+
+    def robot_motion_capabilities(self) -> dict:
+        capabilities = getattr(self.robot, "motion_capabilities", None)
+        return capabilities() if capabilities else {"ready": False, "axes": [], "dances": [], "emotions": []}
+
+    def _model_vision_allowed(self) -> bool:
+        engaged = bool(
+            self.settings.camera_vision_enabled
+            and self.conversation.attended_chat_active
+            and self.state_machine.state == AppState.ENGAGED
+            and not self.event_checkin.scanning
+            and self.guard.is_engaged()
+            and self.realtime is not None
+            and self.realtime.running
+            and not self.realtime._input_suspended
+        )
+        if self.luma_express.active:
+            return engaged and self.luma_express.host_voice and self.browser_camera.active
+        return engaged and self.attention.enabled and isinstance(self.camera, ReachyCameraAdapter)
+
+    async def _inspect_camera(self, arguments: dict, _call_id: str) -> dict:
+        if self.event_checkin.scanning:
+            return {"status": "unavailable", "reason": "finish_event_qr_scanning_first"}
+        if not self._model_vision_allowed():
+            if self.luma_express.active:
+                return {"status": "unavailable", "reason": "enable_camera_sharing_in_dashboard"}
+            return {"status": "unavailable", "reason": "start_attended_chat_or_finish_local_check"}
+        return {"status": "ready", "question": arguments["question"]}
+
+    async def _capture_model_view(self) -> ModelCameraView | None:
+        if not self._model_vision_allowed():
+            return None
+        motion = getattr(self.robot, "motion", None)
+        if motion is not None:
+            async with asyncio.timeout(4.5):
+                while motion.expression_diagnostics()["active"]:
+                    if not self._model_vision_allowed():
+                        return None
+                    await asyncio.sleep(0.05)
+        if self.luma_express.active:
+            view = await self.browser_camera.capture()
+        else:
+            view = await asyncio.to_thread(capture_model_view, self.camera)
+        return view if self._model_vision_allowed() else None
+
+    async def _robot_motion(self, arguments: dict, _call_id: str = "dashboard") -> dict:
+        from app.services.reachy.motion.commands import RobotMotionRequest
+
+        request = RobotMotionRequest.model_validate(arguments)
+        if self.luma_express.active and not self.luma_express.host_voice:
+            if request.action not in {"capabilities", "list", "stop"}:
+                return {"status": "blocked", "reason": "camera_handed_to_luma"}
+        if request.action == "capabilities":
+            capabilities = self.robot_motion_capabilities()
+            capabilities.pop(
+                "community", None
+            )  # Model searches a bounded page instead of thousands of names.
+            return {"status": "available", **capabilities}
+        if request.action == "list":
+            library = getattr(self.robot, "movement_library", None)
+            return (
+                library.search(request.query, offset=request.offset) if library else {"status": "unavailable"}
+            )
+        perform = getattr(self.robot, "perform_motion", None)
+        if perform is None:
+            return {"status": "unavailable"}
+        if request.action != "stop":
+            if (
+                not self.guard.is_engaged()
+                or self.state_machine.state != AppState.ENGAGED
+                or self.realtime is not None
+                and self.realtime._input_suspended
+            ):
+                return {"status": "blocked", "reason": "start_voice_test_or_finish_local_check_first"}
+        result = await perform(request)
+        if result.get("status") == "started":
+            self.conversation.gated_activity()
+        return result
 
     def telemetry_snapshot(self) -> list[dict[str, Any]]:
         return self.telemetry.snapshot()
 
     def camera_diagnostics(self) -> dict[str, Any]:
+        if self.luma_express.active:
+            return {"available": False, "reason": "camera_handed_to_luma"}
         try:
             frame = self.camera.get_frame()
             if frame is None:
@@ -762,7 +1219,11 @@ class AppContext:
                 "faces": [{"bbox": list(face.bbox), "confidence": face.confidence} for face in detections],
             }
         finally:
-            if self.reachy_media is not None:
+            if (
+                self.reachy_media is not None
+                and not self.attention.enabled
+                and not self.event_checkin.scanning
+            ):
                 self.reachy_media.release_idle_camera()
 
     async def simulate_attempt(self) -> None:
@@ -829,18 +1290,19 @@ class AppContext:
             )
         if not self.settings.reachy_enabled or self.settings.reachy_simulation:
             errors.append("production requires a real Reachy adapter")
-        if self.settings.tts_engine not in {"realtime", "fixed_clips"}:
-            errors.append("production speech requires Realtime or pinned fixed clips")
+        if self.settings.tts_engine not in {"live", "realtime", "fixed_clips"}:
+            errors.append("production speech requires GPT-Live, Realtime or pinned fixed clips")
         if not self.settings.realtime_enabled:
-            errors.append("production requires wake-scoped OpenAI Realtime voice")
+            errors.append("production requires wake-scoped OpenAI voice")
         if self.settings.openai_api_key is None:
             errors.append("production OpenAI credential is missing")
         if not self.settings.realtime_safety_identifier_key:
-            errors.append("production requires a keyed Realtime safety identifier")
+            errors.append("production requires a keyed voice safety identifier")
         if self.settings.data_encryption_key is None and not self.settings.kek_endpoint:
             errors.append("production sensitive-data encryption key is missing")
-        if self.settings.openai_realtime_model != "gpt-realtime-2.1":
-            errors.append("production must use the approved current Realtime model")
+        approved = "gpt-live-1" if self.settings.voice_api == "gpt_live" else "gpt-realtime-2.1"
+        if self.settings.voice_model != approved:
+            errors.append("production must use the approved model for the selected voice API")
         if not self.settings.mlai_public_knowledge_token:
             errors.append("production requires an organization-scoped public Roo service principal")
         if self.settings.wakeword_engine != "sherpa_onnx":
@@ -937,7 +1399,17 @@ class AppContext:
         if self.reachy_media:
             media = self.reachy_media.diagnostics()
             audio_ok = audio_ok and (media.get("last_sample_age_seconds") or 999) < 2
-        self.system_health.set_status("audio", HealthStatus.HEALTHY if audio_ok else HealthStatus.ERROR)
+        self.system_health.set_status(
+            "audio",
+            HealthStatus.DEGRADED
+            if self.luma_express.active and not self.luma_express.host_voice
+            else HealthStatus.HEALTHY
+            if audio_ok
+            else HealthStatus.ERROR,
+            {"paused_for": "luma_express"}
+            if self.luma_express.active and not self.luma_express.host_voice
+            else {},
+        )
         self.system_health.set_status(
             "local_wake", HealthStatus.HEALTHY if self._local_models_ready else HealthStatus.DEGRADED
         )
@@ -964,7 +1436,9 @@ class AppContext:
         self.system_health.set_status(
             "attention",
             HealthStatus.HEALTHY
-            if self.attention.tracker and self.attention.heartbeat.healthy()
+            if self.attention.tracker
+            and self.attention.heartbeat.healthy()
+            and not self.attention.degraded_reason
             else HealthStatus.DEGRADED,
             {"reason": self.attention.degraded_reason},
         )
@@ -973,7 +1447,12 @@ class AppContext:
                 "daemon",
                 HealthStatus.HEALTHY if self.daemon_supervisor.heartbeat.healthy() else HealthStatus.ERROR,
             )
-        if isinstance(self.robot, ReachyRobotAdapter) and self.robot.motion and self.robot.motion.error:
+        if (
+            isinstance(self.robot, ReachyRobotAdapter)
+            and self.robot.motion
+            and self.robot.motion.error
+            and not getattr(self.robot.power, "parking", False)
+        ):
             await self._hardware_fault("motion_fault")
         if self.attention.enabled:
             camera_ok = self.attention.heartbeat.healthy()
@@ -1022,13 +1501,24 @@ class AppContext:
         temporary.write_text(json.dumps({"timestamp": time.time(), "pid": __import__("os").getpid()}))
         temporary.replace(heartbeat)
 
-    async def _prepare_engagement(self) -> None:
+    async def _cancel_idle_for_wake(self) -> None:
         if self._idle_task:
-            self._idle_task.cancel()
+            if getattr(getattr(self.robot, "power", None), "parking", False):
+                await asyncio.shield(self._idle_task)
+            else:
+                self._idle_task.cancel()
+
+    async def _prepare_engagement(self) -> None:
+        if self.luma_express.active and not self.luma_express.host_voice:
+            raise RuntimeError("Camera handed to Luma")
+        await self._cancel_idle_for_wake()
         self._track_ref = str(uuid4())
         wake = getattr(self.robot, "wake", None)
-        if wake:
+        if wake and not self.greeter.enabled:
             await wake(self.doa.wake_bearing() if self.doa else 0.0)
+        await self.state_machine.transition(AppState.ENGAGED)
+        if self.luma_express.active:
+            return  # Host voice/motion never reads the browser-owned camera.
         if self.reachy_media:
             frame = await asyncio.to_thread(self.camera.get_frame)
             self.system_health.set_status(
@@ -1037,6 +1527,9 @@ class AppContext:
         self.attention.set_enabled(True)
 
     async def _play_consent_notice(self) -> None:
+        motion = getattr(self.robot, "motion", None)
+        if motion:
+            motion.stop_expression()
         # Simulation models the duration; hardware uses the pinned local clip.
         if self.reachy_media is None:
             from app.services.conversation.fallback_audio import CONSENT_NOTICE
@@ -1058,9 +1551,36 @@ class AppContext:
             )
 
     async def _end_engagement(self) -> None:
+        self.browser_camera.stop()
+        if self.luma_express.host_voice:
+            self.conversation.suspended = True
+            await self.audio_router.stop()
+            self.luma_express.host_voice = False
+            self.conversation.event_host = False
+            self.conversation.host_connected = False
+            self.realtime.host_greeting = None
+        if self.greeter.enabled and not getattr(self, "_stopping", False):
+            motion = getattr(self.robot, "motion", None)
+            if motion:
+                from app.services.reachy.motion.manager import MotionMode
+
+                moving = motion.expression_diagnostics()["speech_motion_enabled"]
+                motion.stop_expression()
+                motion.set_mode(MotionMode.ENGAGED)
+                if not moving:
+                    motion.stop_expression()
+            self.attention.set_enabled(True)
+            await self.state_machine.transition(AppState.IDLE)
+            return  # Local presence watching continues between bounded cloud sessions.
+        motion = getattr(self.robot, "motion", None)
+        if motion:
+            motion.stop_expression()
+            from app.services.reachy.motion.manager import MotionMode
+
+            motion.set_mode(MotionMode.IDLE_NEUTRAL)
         self.attention.set_enabled(False)
         self.av_gate.reset()
-        if self.reachy_media:
+        if self.reachy_media and not self.event_checkin.scanning:
             self.reachy_media.release_idle_camera()
         if self._routing_task and self._routing_task is not asyncio.current_task():
             self._routing_task.cancel()
@@ -1068,24 +1588,49 @@ class AppContext:
         if getattr(self, "_stopping", False):
             return
         await self.state_machine.transition(AppState.IDLE)
-        if self._idle_task:
+        if self._idle_task and self._idle_task is not asyncio.current_task():
             self._idle_task.cancel()
         self._idle_task = asyncio.create_task(self._park_after_idle())
 
     async def _park_after_idle(self, delay=60) -> None:
         await asyncio.sleep(delay)
-        if not self.guard.is_engaged() and not self.access_disabled:
+        if (
+            self.state_machine.state == AppState.IDLE
+            and not self.guard.is_engaged()
+            and not self.access_disabled
+            and not self.event_checkin.scanning
+            and not self.luma_express.active
+            and not self.greeter.enabled
+        ):
             park = getattr(self.robot, "park", None)
             if park:
-                await park()
+                try:
+                    await park()
+                except Exception:
+                    await self._hardware_fault("park_failed")
+                    return
             await self.state_machine.transition(AppState.DORMANT)
 
     async def _hardware_fault(self, reason: str) -> None:
+        async with self._hardware_fault_lock:
+            if self.state_machine.state == AppState.SAFE_HOLD:
+                return
+            await self._enter_safe_hold(reason)
+
+    async def _enter_safe_hold(self, reason: str) -> None:
         if getattr(self, "_stopping", False):
             return
         self.telemetry.publish("hardware_fault", {"reason": reason})
+        await self.greeter.stop()
+        self.conversation.event_greeter = False
+        self.attention.auto_tracking_enabled = True
+        if self.realtime:
+            self.realtime.greeter_greeting = None
+        await self.event_checkin.stop_scanning()
         self.attention.set_enabled(False)
         try:
+            if self.luma_express.host_voice:
+                await self._stop_luma_host()
             await asyncio.wait_for(self.conversation.stop(), timeout=3)
         except Exception:
             logger.error("Conversation shutdown during hardware fault failed")
@@ -1118,6 +1663,10 @@ class AppContext:
 
         while self.state_machine.state == AppState.SAFE_HOLD:
             await asyncio.sleep(60)
+            # A USB fault must not reopen audio or reset the shared device while
+            # Chrome owns the camera. The operator must recover the handoff first.
+            if self.luma_express.active:
+                continue
             permissions = await asyncio.to_thread(permission_status)
             if any(permissions.get(name) in {"denied", "restricted"} for name in ("camera", "microphone")):
                 continue

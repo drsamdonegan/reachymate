@@ -21,23 +21,30 @@ def permission_status() -> dict[str, str]:
 
 
 def camera_devices() -> list[dict]:
-    """AVFoundation enumeration order used by OpenCV; reject virtual cameras."""
+    """Match OpenCV AVFoundation's video+muxed list, sorted by uniqueID."""
     if sys.platform != "darwin":
         return []
     import AVFoundation as av
 
+    devices = list(av.AVCaptureDevice.devicesWithMediaType_(av.AVMediaTypeVideo))
+    devices += list(av.AVCaptureDevice.devicesWithMediaType_(av.AVMediaTypeMuxed))
+    devices.sort(key=lambda device: str(device.uniqueID()))
     return [
         {"index": i, "name": str(device.localizedName()), "unique_id": str(device.uniqueID())}
-        for i, device in enumerate(av.AVCaptureDevice.devicesWithMediaType_(av.AVMediaTypeVideo))
+        for i, device in enumerate(devices)
     ]
 
 
 def resolve_camera(*, name: str = "Reachy Mini Camera", unique_id: str | None = None) -> int:
+    return int(resolve_camera_device(name=name, unique_id=unique_id)["index"])
+
+
+def resolve_camera_device(*, name: str = "Reachy Mini Camera", unique_id: str | None = None) -> dict:
     matches = [
-        d for d in camera_devices() if (d["unique_id"] == unique_id if unique_id else d["name"] == name)
+        d for d in camera_devices() if d["name"] == name and (not unique_id or d["unique_id"] == unique_id)
     ]
     if len(matches) != 1 or any(
         token in matches[0]["name"].casefold() for token in ("virtual", "obs", "continuity")
     ):
         raise RuntimeError("Expected one physical Reachy camera matching name/uniqueID")
-    return int(matches[0]["index"])
+    return dict(matches[0])

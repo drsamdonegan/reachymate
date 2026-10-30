@@ -158,7 +158,7 @@ async def test_motion_serialises_goto_and_streaming_and_clamps():
     names = [name for name, _, _ in operations]
     assert names[names.index("goto_begin") + 1] == "goto_end"
     assert len(set(tid for _, tid, _ in operations)) == 1
-    assert all(call[2].get("body_yaw") is None for call in operations if call[0] == "set")
+    assert all(call[2].get("body_yaw") == 0 for call in operations if call[0] == "set")
     with pytest.raises(ValueError):
         clamp_pose(np.zeros((3, 3)))
 
@@ -170,21 +170,57 @@ async def test_power_call_order_and_sag_disable_finally():
 
     calls = []
     mini = SimpleNamespace(
-        goto_sleep=lambda: calls.append("sleep"), disable_motors=lambda: calls.append("disable")
+        enable_motors=lambda: calls.append("enable"),
+        goto_sleep=lambda: calls.append("sleep"),
+        disable_motors=lambda: calls.append("disable"),
     )
     state = {"head_joints": [0.0] * 7, "head_pose": {"m": SLEEP_HEAD_POSE.reshape(-1).tolist()}}
     daemon = SimpleNamespace(state=lambda: state, motors=lambda: {"mode": "disabled"})
     motion = MotionManager(mini)
     power = RobotPowerManager(motion, daemon, sag_delay=0)
     power._park()
-    assert calls == ["sleep", "disable"]
+    assert calls == ["enable", "sleep", "disable"]
     bad = SimpleNamespace(
+        enable_motors=lambda: calls.append("enable"),
         goto_sleep=lambda: (_ for _ in ()).throw(RuntimeError("broken")),
         disable_motors=lambda: calls.append("disabled_after_error"),
     )
     with pytest.raises(RuntimeError):
         RobotPowerManager(MotionManager(bad), daemon, sag_delay=0)._park()
     assert calls[-1] == "disabled_after_error"
+
+
+@pytest.mark.parametrize(
+    "limit,sag,translation,expected_error",
+    [
+        (0.10, 0.15, 0, "sleep_joint_sag_exceeded"),
+        (0.18, 0.15, 0, None),
+        (0.18, 0.19, 0, "sleep_joint_sag_exceeded"),
+        (0.18, 0.15, 0.20, "sleep_pose_tolerance_exceeded"),
+    ],
+)
+def test_bench_sag_allowance_preserves_normal_limit_and_head_pose_check(
+    limit, sag, translation, expected_error
+):
+    pytest.importorskip("reachy_mini")
+    from reachy_mini.reachy_mini import SLEEP_HEAD_POSE
+
+    pose = SLEEP_HEAD_POSE.copy()
+    pose[0, 3] += translation
+    states = iter(
+        [
+            {"head_joints": [0.0] * 7},
+            {"head_joints": [sag] * 7, "head_pose": {"m": pose.reshape(-1).tolist()}},
+        ]
+    )
+    daemon = SimpleNamespace(state=lambda: next(states), motors=lambda: {"mode": "disabled"})
+    mini = SimpleNamespace(enable_motors=lambda: None, goto_sleep=lambda: None, disable_motors=lambda: None)
+    power = RobotPowerManager(MotionManager(mini), daemon, sag_delay=0, joint_sag_limit=limit)
+    if expected_error:
+        with pytest.raises(RuntimeError, match=expected_error):
+            power._park()
+    else:
+        power._park()
 
 
 def test_stereo_corpus_channel_selection_is_explicit(tmp_path):

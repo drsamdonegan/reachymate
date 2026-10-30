@@ -484,81 +484,13 @@ button.ghost:hover { border-color: rgba(94, 240, 193, 0.4); }
   flex-shrink: 0;
 }
 
-/* ===== Doctor Mode ===== */
-.doctor-patient-img-wrap {
-  margin: 12px 0 0;
-}
-.doctor-patient-img {
-  width: 100%;
-  max-width: 480px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-}
-.doctor-ed-look {
-  margin: 12px 0;
-  padding: 14px 16px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--border);
-  font-size: 14px;
-  line-height: 1.55;
-  color: var(--text);
-  white-space: pre-wrap;
-}
-.doctor-complaint-details {
-  margin: 8px 0 12px;
-}
-.doctor-complaint-details summary {
-  cursor: pointer;
-  color: var(--accent);
-  font-size: 13px;
-  letter-spacing: 0.2px;
-}
-.doctor-complaint {
-  margin: 8px 0 0;
-  padding: 10px 14px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--muted);
-}
-.doctor-guess-row {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
-}
-.doctor-guess-row input {
-  flex: 1;
-  margin: 0;
-}
-.doctor-guess-row button {
-  margin-top: 0;
-  flex-shrink: 0;
-}
-.doctor-hints {
-  margin-top: 8px;
-}
-.doctor-hint {
-  margin: 6px 0;
-  padding: 10px 14px;
-  border-radius: 8px;
-  background: rgba(69, 196, 255, 0.08);
-  border: 1px solid rgba(69, 196, 255, 0.2);
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--accent);
-}
-
 @media (max-width: 760px) {
   .hero h1 { font-size: 26px; }
   .row { grid-template-columns: 1fr; }
   #personality-panel .row:first-of-type { grid-template-columns: 1fr; }
   button { width: 100%; justify-content: center; }
   .controls-bar button { width: auto; }
-  .doctor-guess-row button { width: auto; }
   .actions { flex-direction: column; align-items: flex-start; }
   .chat-bubble { max-width: 90%; }
   .camera-container { max-width: 100%; }
-  .doctor-patient-img { max-width: 100%; }
 }

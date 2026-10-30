@@ -1,4 +1,4 @@
-"""Closed, typed tool boundary: the model has no identity or actuator authority."""
+"""Typed tools: no identity or door actuator authority; robot motion is bounded."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from app.services.reachy.motion.commands import RobotMotionRequest
+
 
 class ToolArguments(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -23,6 +25,10 @@ class NoArguments(ToolArguments):
 
 class KnowledgeArguments(ToolArguments):
     query: str = Field(min_length=1, max_length=500, strict=True)
+
+
+class CameraArguments(ToolArguments):
+    question: str = Field(min_length=1, max_length=500, strict=True)
 
 
 class VisitorIntent(str, Enum):
@@ -84,7 +90,7 @@ class EndArguments(ToolArguments):
     reason: EndReason
 
 
-TOOL_MODELS: dict[str, type[ToolArguments]] = {
+TOOL_MODELS: dict[str, type[BaseModel]] = {
     "search_public_knowledge": KnowledgeArguments,
     "request_access_check": NoArguments,
     "route_visitor": RouteArguments,
@@ -92,6 +98,8 @@ TOOL_MODELS: dict[str, type[ToolArguments]] = {
     "get_visitor_request_status": NoArguments,
     "wait_for_user": NoArguments,
     "end_conversation": EndArguments,
+    "robot_motion": RobotMotionRequest,
+    "inspect_camera": CameraArguments,
 }
 TOOL_DESCRIPTIONS = {
     "search_public_knowledge": (
@@ -108,10 +116,23 @@ TOOL_DESCRIPTIONS = {
     "get_visitor_request_status": "Retrieve the status code for this visitor's current request.",
     "wait_for_user": "Audio is side chatter or noise. Remain silent and await the visitor.",
     "end_conversation": "Finish once current audio has drained.",
+    "robot_motion": (
+        "Control Reachy's head translation/orientation, body yaw and both antennas. "
+        "Use capabilities for built-in dances/emotions and limits; list with a query and offset "
+        "to search all installed Hugging Face moves (20 per page), then use the returned action/name. "
+        "Use recording for a community move; look in a direction "
+        "or around; pose in mm/degrees; gesture nod/shake/wiggle_antennas/neutral; dance or emotion "
+        "by installed name; stop immediately. New motions replace previous ones. No door authority."
+    ),
+    "inspect_camera": (
+        "Inspect a fresh still from Reachy's own camera to answer the caller's visual question. "
+        "Use for what can you see, objects, colors, clothing or visible text. "
+        "Not a video feed, identity check, face recognition or access decision."
+    ),
 }
 
 
-def tool_schemas() -> list[dict[str, Any]]:
+def tool_schemas(*, include_vision: bool = False) -> list[dict[str, Any]]:
     """Return full GA Realtime function definitions, never bare names."""
 
     return [
@@ -122,6 +143,7 @@ def tool_schemas() -> list[dict[str, Any]]:
             "parameters": model.model_json_schema(),
         }
         for name, model in TOOL_MODELS.items()
+        if include_vision or name != "inspect_camera"
     ]
 
 
@@ -179,7 +201,12 @@ class ToolRegistry:
             return self._results[call_id]
         if call_id in self._inflight:
             return await asyncio.shield(self._inflight[call_id])
-        if len(self._results) + len(self._inflight) >= self.session_limit:
+        is_stop = name == "robot_motion" and (
+            arguments.get("action") == "stop"
+            if isinstance(arguments, dict)
+            else isinstance(arguments, str) and len(arguments) <= 4096 and _is_motion_stop(arguments)
+        )
+        if not is_stop and len(self._results) + len(self._inflight) >= self.session_limit:
             return {"status": "rate_limited"}
         task = asyncio.create_task(self._dispatch(name, arguments, call_id=call_id))
         self._inflight[call_id] = task
@@ -236,3 +263,10 @@ class ToolRegistry:
             raise
         except Exception:
             return {"status": "unavailable"}
+
+
+def _is_motion_stop(arguments: str) -> bool:
+    try:
+        return RobotMotionRequest.model_validate_json(arguments).action == "stop"
+    except ValueError:
+        return False

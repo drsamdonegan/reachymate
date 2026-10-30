@@ -3,16 +3,107 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Reachy Office Bouncer</title>
-    <link rel="stylesheet" href="/static/style.css" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Reachy Event Console</title>
+    <link rel="stylesheet" href="/static/style.css?v=20261030-greeter2" />
   </head>
   <body>
     <div class="page">
       <header class="hero">
         <p class="eyebrow">Reachy Mini Lite</p>
-        <h1>Office Bouncer Console</h1>
-        <p class="subtitle">Live vision, local telemetry, enrollment, booking checks, and audit logs.</p>
+        <h1>Reachy Event Console</h1>
+        <p class="subtitle">Face people, welcome them, and chat with GPT-Live.</p>
       </header>
+
+      <section class="panel" id="event-greeter-panel">
+        <h2>Automatic welcome</h2>
+        <p>Reachy uses his own camera to spot a face, turn toward it and welcome the arrival. When nobody is nearby, he looks around gently.</p>
+        <form id="greeter-form" class="stack">
+          <label for="greeter-greeting">Arrival welcome</label>
+          <input id="greeter-greeting" maxlength="300" required value="Welcome to the hackathon!" />
+          <div class="inline wrap">
+            <button id="greeter-start" type="submit">Start event greeter</button>
+            <button id="greeter-stop" type="button" disabled>Stop event greeter</button>
+          </div>
+        </form>
+        <p id="greeter-status" class="output" aria-live="polite">Loading greeter status…</p>
+        <p class="muted">Local face detection does not identify people or save their images. One welcome per arrival; five seconds out of view re-arms it, with at least fifteen seconds between welcomes. GPT-Live handles voice and requested camera questions. Stop movement pauses turning; Stop event greeter stops voice and face watching. Closing the dashboard leaves the greeter running.</p>
+      </section>
+
+      <details class="panel" id="event-checkin-panel" aria-labelledby="event-checkin-title">
+        <summary>Optional Luma ticket scanning</summary>
+        <div class="panel-head">
+          <h2 id="event-checkin-title">Event check-in · Luma</h2>
+          <span id="event-scanner-status" class="muted" aria-live="polite">Scanner off</span>
+        </div>
+        <p>Use Luma Express to check in single-ticket guests automatically with Reachy’s USB camera.</p>
+        <form id="event-select-form" class="inline wrap">
+          <label for="luma-event-id">Luma event ID</label>
+          <input id="luma-event-id" placeholder="evt-…" maxlength="84" required />
+          <button type="submit" id="event-select-submit">Select event</button>
+        </form>
+        <p id="luma-event-name" class="muted"></p>
+        <div class="inline wrap">
+          <button id="event-express-start" disabled>Open automatic Luma check-in</button>
+          <a id="event-express-reopen" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" hidden>Reopen Luma scanner ↗</a>
+        </div>
+        <p id="event-express-status" class="output" aria-live="polite">Select an event to begin.</p>
+        <p class="muted">In Chrome, choose <strong>Settings → Privacy and security → Site settings → Camera → Reachy Mini Camera</strong>, then reload Luma and allow camera access. Cover Reachy’s lens briefly to confirm the preview darkens.</p>
+        <p class="muted">After opening or reloading Luma, choose <strong>Scanner Options → Express → Confirm</strong> and check <strong>Express Mode On</strong>. Single tickets are recorded automatically; group tickets still need selection. No API key is needed.</p>
+        <p class="muted">Face checks and Reachy’s camera preview pause during the handoff. Luma controls its own camera session: close every Luma scanner tab before returning the camera. Closing this dashboard does not stop Luma.</p>
+        <div id="event-host-controls" hidden>
+          <h3>GPT-Live event host</h3>
+          <form id="event-host-form" class="stack">
+            <label for="event-host-greeting">Welcome message</label>
+            <input id="event-host-greeting" maxlength="300" required value="Welcome to the event! Please show me your QR code ticket!" />
+            <button id="event-host-start" type="submit">Start GPT-Live host</button>
+          </form>
+          <div class="inline wrap">
+            <button id="event-host-welcome" disabled>Say welcome again</button>
+            <button id="event-host-stop" disabled>Stop host voice</button>
+          </div>
+          <p id="event-host-status" class="output" aria-live="polite"></p>
+          <p class="muted">Streams Reachy’s microphone to OpenAI until Stop or the chat time limit shown below. You can interrupt, ask it to welcome guests, look around or dance. Reachy moves while talking; let him settle before showing a QR ticket. Use Stop host voice when finished; closing the dashboard does not stop voice. Restart the host to use an edited welcome.</p>
+          <div id="host-camera-controls">
+            <h3>Let Reachy see</h3>
+            <p class="muted">Open this dashboard in the same Chrome profile as Luma. Share Reachy’s camera, then ask “What can you see?” or “Look around for a person.” Visual questions send a fresh still to OpenAI; no images are saved locally. Luma handles ticket results independently.</p>
+            <div class="inline wrap">
+              <button id="host-camera-start" type="button" disabled>Enable camera sharing</button>
+              <button id="host-camera-stop" type="button" disabled>Stop camera sharing</button>
+            </div>
+            <p id="host-camera-status" class="output" aria-live="polite">Start the GPT-Live host, then enable camera sharing.</p>
+            <video id="host-camera-preview" autoplay muted playsinline hidden style="width:100%;max-width:640px;border-radius:12px" aria-label="Shared Reachy camera preview"></video>
+            <p class="muted">Keep this tab open. Closing or reloading it stops sharing; Luma keeps its own stream. Only Reachy Mini Camera is accepted.</p>
+          </div>
+        </div>
+        <button id="event-express-finish" hidden>Luma scanner is closed — return camera to Reachy</button>
+        <p id="event-express-error" role="status"></p>
+        <details id="event-assisted-panel">
+          <summary>Assisted scanner and API verification</summary>
+          <div class="inline wrap">
+            <button id="event-scan-start" disabled>Start QR scanner</button>
+            <button id="event-scan-stop" disabled>Stop QR scanner</button>
+            <button id="event-next">Next guest</button>
+          </div>
+          <p class="muted">QR decoding stays on this Mac. Scanning keeps Reachy’s camera on for up to 30 minutes; stop it when finished. Model image uploads are paused while scanning.</p>
+          <p id="event-verification-notice" class="muted"></p>
+          <div id="event-scan-result" class="output" aria-live="polite">Select an event to begin.</div>
+          <ul id="event-tickets"></ul>
+          <div class="inline wrap">
+            <a id="event-luma-checkin" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" hidden>Complete check-in in Luma ↗</a>
+            <button id="event-verify" disabled>Verify Luma check-in</button>
+          </div>
+          <p id="event-checkin-error" role="status"></p>
+          <details>
+            <summary>Paste a ticket QR link</summary>
+            <form id="event-qr-form" class="inline wrap">
+              <label for="event-qr-code">Ticket QR link</label>
+              <input id="event-qr-code" type="password" autocomplete="off" maxlength="2048" required />
+              <button type="submit">Read ticket</button>
+            </form>
+          </details>
+        </details>
+      </details>
 
       <section class="grid">
         <article class="panel">
@@ -34,9 +125,15 @@
             <h2>Reachy's View</h2>
             <div class="inline">
               <button id="start-voice-test">Start Voice Test</button>
+              <button id="stop-voice-test" disabled>Stop chat</button>
               <button id="simulate-attempt">Test Access Placeholder</button>
             </div>
           </div>
+          <div id="voice-test-status" class="muted">Say “Hey Reachy” or start a voice test.</div>
+          <p id="voice-mode-notice" class="muted"></p>
+          <div id="voice-audio-status" class="muted" aria-live="polite"></div>
+          <p id="model-vision-status" class="muted" aria-live="polite"></p>
+          <p id="model-vision-observation" class="muted" aria-live="polite"></p>
           <img id="camera-feed" alt="Reachy camera feed" />
           <div id="camera-status" class="muted"></div>
         </article>
@@ -53,7 +150,59 @@
 
         <article class="panel">
           <h2>Actions</h2>
-          <div id="voice-test-status" class="muted">Say “Hey Reachy” or start a voice test.</div>
+          <h3>Robot movements</h3>
+          <p id="motion-mode-notice" class="muted">Start a voice test, then ask Roo to look around, dance, nod or wiggle his antennas.</p>
+          <form id="robot-request-form" class="stack">
+            <label for="robot-request-text">Ask Roo (text)</label>
+            <div class="inline">
+              <input id="robot-request-text" value="Please look around." maxlength="240" />
+              <button type="submit">Ask Roo</button>
+            </div>
+          </form>
+          <div class="inline wrap" id="motion-buttons">
+            <button data-robot-motion="look" data-direction="left">Look left</button>
+            <button data-robot-motion="look" data-direction="right">Look right</button>
+            <button data-robot-motion="look" data-direction="up">Look up</button>
+            <button data-robot-motion="look" data-direction="down">Look down</button>
+            <button data-robot-motion="look" data-direction="around">Look around</button>
+            <button data-robot-motion="gesture" data-name="nod">Nod</button>
+            <button data-robot-motion="gesture" data-name="wiggle_antennas">Wiggle antennas</button>
+            <button data-robot-motion="gesture" data-name="neutral">Neutral pose</button>
+            <button data-robot-motion="stop" class="danger">Stop movement</button>
+          </div>
+          <p id="motion-status" class="muted"></p>
+          <form id="motion-library-form" class="stack">
+            <label for="motion-kind">Movement library</label>
+            <div class="inline wrap">
+              <select id="motion-kind"><option value="dance">Dance</option><option value="emotion">Expression</option><option value="recording">Hugging Face community</option></select>
+              <select id="motion-name" aria-label="Movement name"></select>
+              <button type="submit">Play movement</button>
+            </div>
+          </form>
+          <label for="motion-search">Find a movement</label>
+          <input id="motion-search" type="search" placeholder="Name or creator" />
+          <p id="motion-search-status" class="muted"></p>
+          <button id="motion-reload" type="button">Reload installed moves</button>
+          <p id="motion-result" class="muted" aria-live="polite">Loading movement library…</p>
+          <details>
+            <summary>Head, body and antenna pose</summary>
+            <form id="motion-pose-form" class="stack">
+              <p class="muted">Leave fields blank to keep that axis. Coordinates are in Reachy's frame. Unreachable combinations are rejected.</p>
+              <div class="grid two">
+                <label>Head forward (mm)<input type="number" name="x_mm" min="-40" max="40" step="1" /></label>
+                <label>Head left (mm)<input type="number" name="y_mm" min="-40" max="40" step="1" /></label>
+                <label>Head height (mm)<input type="number" name="z_mm" min="-50" max="30" step="1" /></label>
+                <label>Head roll (°)<input type="number" name="roll_degrees" min="-40" max="40" step="1" /></label>
+                <label>Head pitch (°)<input type="number" name="pitch_degrees" min="-40" max="40" step="1" /></label>
+                <label>Head yaw (°)<input type="number" name="yaw_degrees" min="-180" max="180" step="1" /></label>
+                <label>Body yaw (°)<input type="number" name="body_yaw_degrees" min="-160" max="160" step="1" /></label>
+                <label>Right antenna (°)<input type="number" name="right_antenna_degrees" min="-175" max="175" step="1" /></label>
+                <label>Left antenna (°)<input type="number" name="left_antenna_degrees" min="-175" max="175" step="1" /></label>
+                <label>Move duration (seconds)<input type="number" name="duration_seconds" value="2" min="0.5" max="20" step="0.5" /></label>
+              </div>
+              <button type="submit">Move to pose</button>
+            </form>
+          </details>
           <form id="speech-form" class="stack">
             <label for="speech-text">Test speech</label>
             <div class="inline">
@@ -106,6 +255,8 @@
       </section>
     </div>
 
-    <script src="/static/main.js"></script>
+    <script src="/static/event-checkin.js?v=20261030-greeter2"></script>
+    <script src="/static/host-camera.js?v=20261030-greeter2"></script>
+    <script src="/static/main.js?v=20261030-greeter2"></script>
   </body>
 </html>

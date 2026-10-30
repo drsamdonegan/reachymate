@@ -21,6 +21,17 @@ class CameraCalibration:
     distortion: np.ndarray
     width: int = 1920
     height: int = 1080
+    measured: bool = True
+
+    @classmethod
+    def sdk_demo(cls) -> "CameraCalibration":
+        """Vendor intrinsics for detection-only bench conversation, never field evidence."""
+        from reachy_mini.media.camera_constants import ReachyMiniLiteCamSpecs
+        from reachy_mini.media.camera_utils import scale_intrinsics
+
+        specs = ReachyMiniLiteCamSpecs()
+        matrix = scale_intrinsics(specs.K, (3840, 2592), (1920, 1080), specs.default_resolution.value[3])
+        return cls(matrix, specs.D.copy(), measured=False)
 
     @classmethod
     def load(cls, path: str) -> "CameraCalibration":
@@ -146,14 +157,28 @@ class AttentionTracker:
 
 class AttentionService:
     def __init__(
-        self, *, camera, detector, calibration: CameraCalibration | None, on_face=None, mouth=None
+        self,
+        *,
+        camera,
+        detector,
+        calibration: CameraCalibration | None,
+        on_face=None,
+        mouth=None,
+        uncalibrated_demo: bool = False,
     ) -> None:
+        if calibration is None and uncalibrated_demo:
+            calibration = CameraCalibration.sdk_demo()
         self.camera, self.detector, self.on_face, self.mouth = camera, detector, on_face, mouth
         self.tracker = AttentionTracker(calibration) if calibration else None
         self.heartbeat = Heartbeat(0.1)
         self.worker = SupervisedTask("face-attention", self._run, heartbeat=self.heartbeat)
         self.enabled = False
+        self.last_visible_face_at = -float("inf")
+        self.auto_tracking_enabled = True
         self.degraded_reason = None if calibration else "camera_calibration_unmeasured"
+        if calibration is not None and not calibration.measured:
+            self.degraded_reason = "sdk_intrinsics_unmeasured_demo"
+            self.on_face = None
 
     def latest(self) -> AttentionObservation | None:
         return self.tracker.observation if self.enabled and self.tracker else None
@@ -167,6 +192,8 @@ class AttentionService:
 
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = enabled
+        if not enabled:
+            self.last_visible_face_at = -float("inf")
         if not enabled and self.tracker:
             self.tracker.reset()
 
@@ -174,7 +201,7 @@ class AttentionService:
         while True:
             if self.enabled and self.tracker:
                 observation = await asyncio.to_thread(self._detect)
-                if observation is not None and self.on_face is not None:
+                if observation is not None and self.on_face is not None and self.auto_tracking_enabled:
                     await self.on_face(observation.bbox)
                 self.heartbeat.beat()
             await asyncio.sleep(0.1)
@@ -197,6 +224,8 @@ class AttentionService:
                 int(w * width / 640),
                 int(h * height / 360),
             )
+        if any(face.bbox[2] >= self.tracker.calibration.zone_width * 0.8 for face in faces):
+            self.last_visible_face_at = time.monotonic()
         observation = self.tracker.update(faces)
         if observation and self.mouth:
             from dataclasses import replace

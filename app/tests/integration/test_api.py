@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -85,14 +87,32 @@ def test_readiness_returns_503_when_access_safeguards_are_missing(settings) -> N
     assert ready.json()["components"]["face_liveness"] == "ERROR"
 
 
-def test_voice_test_endpoint_reports_disabled_realtime(settings) -> None:
+def test_voice_test_endpoint_reports_disabled_voice(settings) -> None:
     app = create_app(settings, context_factory=lambda current: AppContext(settings=current))
 
     with TestClient(app) as client:
         response = client.post("/api/admin/test-conversation")
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "Realtime voice is not enabled"
+    assert response.json()["detail"] == "OpenAI voice is not enabled"
+
+
+def test_dashboard_disconnect_releases_telemetry_subscription(settings) -> None:
+    app = create_app(settings, context_factory=lambda current: AppContext(settings=current))
+    with TestClient(app) as client:
+        broker = app.state.context.telemetry
+        for index in range(250):
+            broker.publish("test", {"index": index})
+        with client.websocket_connect("/ws/telemetry") as websocket:
+            assert websocket.receive_json()["payload"]["index"] == 150
+
+        async def wait_unsubscribed():
+            async with asyncio.timeout(1):
+                while broker._subscribers:
+                    await asyncio.sleep(0.001)
+
+        client.portal.call(wait_unsubscribed)
+        assert not broker._subscribers
 
 
 def test_access_attempt_allows_booked_user(settings, known_face_result: FaceMatchResult) -> None:

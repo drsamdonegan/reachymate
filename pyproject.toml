@@ -58,6 +58,7 @@ dev = [
 [project.scripts]
 reachy-office-bouncer = "app.main:main"
 reachy-live-test = "app.scripts.run_reachy_live_test:main"
+reachy-launch = "app.scripts.launch_reachy:main"
 
 [tool.setuptools]
 include-package-data = true
