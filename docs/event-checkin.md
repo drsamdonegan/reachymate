@@ -17,7 +17,7 @@ registration alone never means someone is checked in.
    Use Luma's **Flip Camera** control if necessary. Cover Reachy's lens briefly to confirm that the preview
    darkens; don't assume the browser selected the USB camera instead of the MacBook's camera.
 4. In **Scanner Options**, choose **Express → Confirm**. Check that the page says **Express Mode On**.
-   This setting is for that scanner/browser; check it again in another profile or after clearing site data.
+   Check this in every new scanner tab: a newly opened scanner can revert to Standard mode even in the same browser.
 5. Hold one guest's QR code in front of Reachy. Luma automatically records a valid single-ticket arrival
    and displays the result. There is no per-person dashboard click and no API key is needed. Multiple-ticket
    guests still require selecting tickets in Luma; invalid/unapproved tickets go to staff.

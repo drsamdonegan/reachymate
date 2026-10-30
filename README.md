@@ -63,7 +63,7 @@ The same dashboard includes look, gesture, dance, expression and numeric pose co
 
 The existing dashboard also includes [Luma event check-in](docs/event-checkin.md). **Open automatic Luma
 check-in** pauses Reachy's voice/camera features and opens Luma's official Express scanner using his USB
-camera. Confirm **Reachy Mini Camera** and **Express Mode On** once in the browser; valid single-ticket
+camera. Confirm **Reachy Mini Camera** and **Express Mode On** in each new scanner tab; valid single-ticket
 guests then check in without per-person clicks or an API key. Group tickets still need selection. Close
 all Luma scanner tabs and return the camera from the dashboard before resuming chat. The handoff survives
 restarts. The original assisted local scanner and optional API verification remain available. Use
