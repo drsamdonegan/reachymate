@@ -8,7 +8,9 @@ registration alone never means someone is checked in.
 
 1. Open the existing Reachy launcher/dashboard and confirm the event ID.
 2. Click **Open automatic Luma check-in**. Reachy finishes any current wake, closes cloud voice, cancels
-   face checks and releases the USB camera before opening the official Luma scanner in a new browser tab.
+   face checks and stops local microphone/direction workers before releasing the USB camera and opening
+   the official Luma scanner in a new browser tab. USB audio recovery is paused too, so it cannot reset the
+   device while Luma is scanning.
    His head wakes to the normal position. Local camera preview, model images and movement requests pause;
    emergency Stop movement still works. If the popup is blocked, allow the dashboard to open a tab and retry.
 3. Sign in to Luma with check-in access. Allow camera access for Luma and select **Reachy Mini Camera**.

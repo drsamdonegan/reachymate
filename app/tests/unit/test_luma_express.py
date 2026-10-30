@@ -56,6 +56,7 @@ async def test_handoff_blocks_all_local_camera_and_voice_paths_until_return(sett
         assert result["express"]["active"] and result["express"]["camera_released"]
         assert ctx.conversation.suspended
         ctx.robot.speech.drop_pending.assert_called_once()
+        assert not ctx.audio_router._running
         assert not ctx.attention.enabled
         assert ctx.camera.get_frame() is None
         assert ctx.get_camera_snapshot() is None
@@ -87,12 +88,17 @@ async def test_startup_restores_handoff_before_any_camera_capture(settings, tmp_
     marker = LumaExpressHandoff(tmp_path / "luma-browser-handoff.json")
     marker.begin("evt-demo")
     ctx = AppContext(settings=settings)
+    ctx.audio_router.start = AsyncMock()
+    ctx.doa = SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
     try:
         assert ctx.luma_express.active and ctx.camera.external_owner
         assert ctx.conversation.suspended
         assert ctx.event_checkin.event["id"] == "evt-demo"
         assert not ctx.conversation.diagnostics()["dashboard_auto_start"]
         assert ctx.camera.get_frame() is None
+        await ctx.start()
+        ctx.audio_router.start.assert_not_awaited()
+        ctx.doa.start.assert_not_awaited()
     finally:
         await ctx.stop()
     assert marker.path.exists()  # closing the app cannot close Chrome's scanner
@@ -109,6 +115,43 @@ async def test_partial_handoff_failure_leaves_voice_paused_and_can_be_recovered(
         assert "private device detail" not in str(error.value)
         assert ctx.luma_express.active and not ctx.luma_express.ready
         assert ctx.conversation.suspended and ctx.camera.external_owner
+        await ctx.finish_luma_express(True)
+        assert not ctx.luma_express.active
+    finally:
+        await ctx.stop()
+
+
+@pytest.mark.asyncio
+async def test_handoff_stops_local_audio_and_direction_workers_then_return_restarts(settings):
+    ctx = AppContext(settings=settings)
+    ctx.event_checkin.event = {"id": "evt-demo", "name": "Demo"}
+    ctx.audio_router.start, ctx.audio_router.stop = AsyncMock(), AsyncMock()
+    ctx.doa = SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
+    try:
+        await ctx.start_luma_express()
+        ctx.audio_router.stop.assert_awaited_once()
+        ctx.doa.stop.assert_awaited_once()
+        ctx.audio_router.start.assert_not_awaited()
+        await ctx.finish_luma_express(True)
+        ctx.audio_router.start.assert_awaited_once()
+        ctx.doa.start.assert_awaited_once()
+        assert not ctx.conversation._engaged
+    finally:
+        await ctx.stop()
+
+
+@pytest.mark.asyncio
+async def test_failed_microphone_resume_keeps_handoff_paused_and_recoverable(settings):
+    ctx = AppContext(settings=settings)
+    ctx.event_checkin.event = {"id": "evt-demo", "name": "Demo"}
+    try:
+        await ctx.start_luma_express()
+        ctx.audio_router.start = AsyncMock(side_effect=RuntimeError("private device detail"))
+        with pytest.raises(ValueError, match="Chat stays paused"):
+            await ctx.finish_luma_express(True)
+        assert ctx.conversation.suspended and ctx.luma_express.active
+        assert ctx.camera.external_owner and not ctx.audio_router._running
+        ctx.audio_router.start = AsyncMock()
         await ctx.finish_luma_express(True)
         assert not ctx.luma_express.active
     finally:

@@ -575,13 +575,9 @@ class AppContext:
                 "realtime", HealthStatus.HEALTHY if realtime_ready else HealthStatus.ERROR
             )
 
-            await self.audio_router.start()
+            if not self.luma_express.active:
+                await self._start_local_listening()
             await self.attention.start()
-            if self.doa:
-                try:
-                    await self.doa.start()
-                except Exception as exc:
-                    self.system_health.set_status("xvf", HealthStatus.DEGRADED, {"error": type(exc).__name__})
             audio_detail: dict[str, Any] = {}
             if self.reachy_media is not None:
                 media_audio = self.reachy_media.diagnostics()
@@ -795,6 +791,14 @@ class AppContext:
         if self.realtime and self.realtime.running and not self.realtime._input_suspended:
             await self.robot.speak("Your event check-in is confirmed. Welcome!")
 
+    async def _start_local_listening(self) -> None:
+        await self.audio_router.start()
+        if self.doa:
+            try:
+                await self.doa.start()
+            except Exception as exc:
+                self.system_health.set_status("xvf", HealthStatus.DEGRADED, {"error": type(exc).__name__})
+
     async def start_luma_express(self) -> dict:
         async with self._event_mode_lock:
             event = self.event_checkin.event
@@ -811,6 +815,11 @@ class AppContext:
             try:
                 await self.event_checkin.stop_scanning()
                 await self.conversation.suspend()
+                # Stop local capture and USB recovery too: a microphone reset must
+                # never interrupt the independent browser scanner during handoff.
+                await self.audio_router.stop()
+                if self.doa:
+                    await self.doa.stop()
                 speech = getattr(self.robot, "speech", None)
                 if speech:
                     speech.drop_pending()
@@ -845,10 +854,20 @@ class AppContext:
         async with self._event_mode_lock:
             if not self.luma_express.active:
                 return self.event_checkin.snapshot()
-            self.luma_express.finish()
-            await asyncio.to_thread(self.camera.set_external_owner, False)
+            try:
+                await self._start_local_listening()
+                await asyncio.to_thread(self.camera.set_external_owner, False)
+                await self.camera.start()
+                self.luma_express.finish()
+            except Exception:
+                await self.audio_router.stop()
+                if self.doa:
+                    await self.doa.stop()
+                await asyncio.to_thread(self.camera.set_external_owner, True)
+                raise ValueError(
+                    "Could not resume Reachy. Chat stays paused; check local audio and retry"
+                ) from None
             self.conversation.suspended = False
-            await self.camera.start()
             await self._release_event_camera()
             self.telemetry.publish("event_scanner_mode", {"mode": "reachy"})
         return self.event_checkin.snapshot()
@@ -1174,7 +1193,15 @@ class AppContext:
         if self.reachy_media:
             media = self.reachy_media.diagnostics()
             audio_ok = audio_ok and (media.get("last_sample_age_seconds") or 999) < 2
-        self.system_health.set_status("audio", HealthStatus.HEALTHY if audio_ok else HealthStatus.ERROR)
+        self.system_health.set_status(
+            "audio",
+            HealthStatus.DEGRADED
+            if self.luma_express.active
+            else HealthStatus.HEALTHY
+            if audio_ok
+            else HealthStatus.ERROR,
+            {"paused_for": "luma_express"} if self.luma_express.active else {},
+        )
         self.system_health.set_status(
             "local_wake", HealthStatus.HEALTHY if self._local_models_ready else HealthStatus.DEGRADED
         )
