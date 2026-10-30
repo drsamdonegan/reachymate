@@ -56,6 +56,7 @@ from app.services.vision.enrollment import EnrollmentService
 from app.services.vision.face_detect import YuNetFaceDetector
 from app.services.vision.face_embed import SFaceEmbedder
 from app.services.vision.face_match import FaceMatcher, IdentificationService
+from app.services.vision.greeter import EventGreeter, visual_target
 from app.services.vision.model_view import ModelCameraView, capture_model_view
 from app.services.vision.pose import FacePoseEstimator
 from app.state_machine import OfficeBouncerStateMachine
@@ -334,6 +335,15 @@ class AppContext:
             uncalibrated_demo=settings.uncalibrated_conversation_demo,
         )
         self.attention.worker.on_fault = self._hardware_fault
+        self.greeter = EventGreeter(
+            observation=self.attention.latest,
+            follow=self._greeter_follow,
+            welcome=self._greeter_welcome,
+            visible=lambda: (
+                self.attention.enabled and time.monotonic() - self.attention.last_visible_face_at < 0.4
+            ),
+        )
+        self.greeter.greeting = settings.event_greeter_greeting
         if settings.mouth_landmarker_path and settings.mouth_landmarker_sha256:
             import hashlib
 
@@ -613,6 +623,7 @@ class AppContext:
     async def stop(self) -> None:
         self._stopping = True
         self.browser_camera.stop()
+        await self.greeter.stop()
         tasks = (
             self._routing_task,
             self._idle_task,
@@ -788,6 +799,7 @@ class AppContext:
         return (
             not getattr(self, "_stopping", False)
             and not self.luma_express.active
+            and not self.greeter.enabled
             and self.state_machine.state != AppState.SAFE_HOLD
             and not (self.realtime and self.realtime._input_suspended)
         )
@@ -814,6 +826,8 @@ class AppContext:
 
     async def start_luma_express(self) -> dict:
         async with self._event_mode_lock:
+            if self.greeter.enabled:
+                raise ValueError("Stop the event greeter before handing the camera to Luma")
             event = self.event_checkin.event
             if not event:
                 raise ValueError("Select a Luma event first")
@@ -943,6 +957,83 @@ class AppContext:
             await self._stop_luma_host()
         return self.event_checkin.snapshot()
 
+    async def start_event_greeter(self, greeting: str | None = None) -> dict:
+        greeting = " ".join((greeting or self.settings.event_greeter_greeting).split())
+        if not greeting or len(greeting) > 300:
+            raise ValueError("Enter a welcome of 1 to 300 characters")
+        async with self._event_mode_lock:
+            if self.greeter.enabled:
+                return self.greeter.diagnostics()
+            if self.luma_express.active:
+                raise ValueError("Close Luma's scanner and return the camera first")
+            if self.state_machine.state == AppState.SAFE_HOLD or getattr(self, "_stopping", False):
+                raise ValueError("Resolve the robot fault before starting the greeter")
+            if not isinstance(self.realtime, OpenAIGptLiveSession) or not self.settings.attended_chat_enabled:
+                raise ValueError("The event greeter requires GPT-Live attended chat")
+            if self.attention.tracker is None:
+                raise ValueError("The face detector needs camera calibration or the demo profile")
+            await self.event_checkin.stop_scanning()
+            await self.conversation.stop()
+            await self._end_engagement()
+            self.conversation.event_greeter = True
+            self.conversation.suspended = False
+            self.attention.auto_tracking_enabled = False
+            self.realtime.greeter_greeting = greeting
+            try:
+                await self._start_local_listening()
+                await self.conversation.handle_wake(attended=True)
+                if not self.realtime.running or self.state_machine.state != AppState.ENGAGED:
+                    raise ValueError("GPT-Live did not connect")
+                # Confirm native camera access before enabling automatic movement/greetings.
+                if await asyncio.to_thread(self.camera.get_frame) is None:
+                    raise ValueError("Reachy's camera is unavailable")
+                await self.greeter.start(greeting)
+            except (Exception, asyncio.CancelledError):
+                await self._stop_event_greeter()
+                raise
+            return self.greeter.diagnostics()
+
+    async def _stop_event_greeter(self) -> None:
+        await self.greeter.stop()
+        self.conversation.event_greeter = False
+        self.attention.auto_tracking_enabled = True
+        if self.realtime:
+            self.realtime.greeter_greeting = None
+        await self.conversation.stop()
+        await self._end_engagement()
+
+    async def stop_event_greeter(self) -> dict:
+        async with self._event_mode_lock:
+            await self._stop_event_greeter()
+            return self.greeter.diagnostics()
+
+    async def _greeter_follow(self, bbox, elapsed: float) -> None:
+        if self.state_machine.state not in {AppState.IDLE, AppState.ENGAGED}:
+            return
+        motion = getattr(self.robot, "motion", None)
+        if motion:
+            calibration = self.attention.tracker.calibration
+            pose = visual_target(motion.frame().head, bbox, calibration.width, calibration.height, elapsed)
+            motion.set_tracking_target(pose, autonomous=True)
+
+    async def _greeter_welcome(self, greeting: str) -> bool:
+        if not self.greeter.enabled or not self.greeter.present:
+            return False
+        if not self.realtime.running:
+            await self.conversation.handle_wake(attended=True)
+            if not self.realtime.running:
+                raise RuntimeError("Voice connection unavailable")
+        # Let an existing reply finish instead of talking over it with a welcome.
+        async with asyncio.timeout(12):
+            await self.realtime.wait_response_finished()
+            while self.robot.is_speaking():
+                await asyncio.sleep(0.1)
+        if not self.greeter.enabled or not self.greeter.present:
+            return False
+        await self.robot.speak(greeting)
+        self.telemetry.publish("event_greeter", {"event": "welcome_requested"})
+        return True
+
     async def welcome_luma_guest(self) -> dict:
         if not self.luma_express.host_voice or not self.realtime or not self.realtime.running:
             raise ValueError("Start the GPT-Live host first")
@@ -967,6 +1058,9 @@ class AppContext:
         return self.realtime.diagnostics()
 
     async def stop_voice_test(self) -> dict[str, str]:
+        if self.greeter.enabled:
+            await self.stop_event_greeter()
+            return {"status": "stopped"}
         if self.luma_express.host_voice:
             await self.stop_luma_host()
             return {"status": "stopped"}
@@ -1008,6 +1102,15 @@ class AppContext:
             "face_present": observation is not None and observation.in_zone,
         }
         diagnostics["browser_camera"] = self.browser_camera.diagnostics()
+        diagnostics["greeter"] = {
+            **self.greeter.diagnostics(),
+            "auto_start": self.settings.dashboard_auto_greeter,
+            "unavailable_reason": (
+                "Robot fault. Check USB and external power, then reopen the Reachy launcher."
+                if self.state_machine.state == AppState.SAFE_HOLD
+                else None
+            ),
+        }
         power = getattr(self.robot, "power", None)
         if power:
             diagnostics["power"] = {
@@ -1411,7 +1514,7 @@ class AppContext:
         await self._cancel_idle_for_wake()
         self._track_ref = str(uuid4())
         wake = getattr(self.robot, "wake", None)
-        if wake:
+        if wake and not self.greeter.enabled:
             await wake(self.doa.wake_bearing() if self.doa else 0.0)
         await self.state_machine.transition(AppState.ENGAGED)
         if self.luma_express.active:
@@ -1456,6 +1559,19 @@ class AppContext:
             self.conversation.event_host = False
             self.conversation.host_connected = False
             self.realtime.host_greeting = None
+        if self.greeter.enabled and not getattr(self, "_stopping", False):
+            motion = getattr(self.robot, "motion", None)
+            if motion:
+                from app.services.reachy.motion.manager import MotionMode
+
+                moving = motion.expression_diagnostics()["speech_motion_enabled"]
+                motion.stop_expression()
+                motion.set_mode(MotionMode.ENGAGED)
+                if not moving:
+                    motion.stop_expression()
+            self.attention.set_enabled(True)
+            await self.state_machine.transition(AppState.IDLE)
+            return  # Local presence watching continues between bounded cloud sessions.
         motion = getattr(self.robot, "motion", None)
         if motion:
             motion.stop_expression()
@@ -1484,6 +1600,7 @@ class AppContext:
             and not self.access_disabled
             and not self.event_checkin.scanning
             and not self.luma_express.active
+            and not self.greeter.enabled
         ):
             park = getattr(self.robot, "park", None)
             if park:
@@ -1504,6 +1621,11 @@ class AppContext:
         if getattr(self, "_stopping", False):
             return
         self.telemetry.publish("hardware_fault", {"reason": reason})
+        await self.greeter.stop()
+        self.conversation.event_greeter = False
+        self.attention.auto_tracking_enabled = True
+        if self.realtime:
+            self.realtime.greeter_greeting = None
         await self.event_checkin.stop_scanning()
         self.attention.set_enabled(False)
         try:

@@ -4,18 +4,34 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="referrer" content="no-referrer" />
-    <title>Reachy Office Bouncer</title>
-    <link rel="stylesheet" href="/static/style.css?v=20261030-moves2" />
+    <title>Reachy Event Console</title>
+    <link rel="stylesheet" href="/static/style.css?v=20261030-greeter2" />
   </head>
   <body>
     <div class="page">
       <header class="hero">
         <p class="eyebrow">Reachy Mini Lite</p>
-        <h1>Office Bouncer Console</h1>
-        <p class="subtitle">Live vision, local telemetry, enrollment, booking checks, and audit logs.</p>
+        <h1>Reachy Event Console</h1>
+        <p class="subtitle">Face people, welcome them, and chat with GPT-Live.</p>
       </header>
 
-      <section class="panel" id="event-checkin-panel" aria-labelledby="event-checkin-title">
+      <section class="panel" id="event-greeter-panel">
+        <h2>Automatic welcome</h2>
+        <p>Reachy uses his own camera to spot a face, turn toward it and welcome the arrival. When nobody is nearby, he looks around gently.</p>
+        <form id="greeter-form" class="stack">
+          <label for="greeter-greeting">Arrival welcome</label>
+          <input id="greeter-greeting" maxlength="300" required value="Welcome to the hackathon!" />
+          <div class="inline wrap">
+            <button id="greeter-start" type="submit">Start event greeter</button>
+            <button id="greeter-stop" type="button" disabled>Stop event greeter</button>
+          </div>
+        </form>
+        <p id="greeter-status" class="output" aria-live="polite">Loading greeter status…</p>
+        <p class="muted">Local face detection does not identify people or save their images. One welcome per arrival; five seconds out of view re-arms it, with at least fifteen seconds between welcomes. GPT-Live handles voice and requested camera questions. Stop movement pauses turning; Stop event greeter stops voice and face watching. Closing the dashboard leaves the greeter running.</p>
+      </section>
+
+      <details class="panel" id="event-checkin-panel" aria-labelledby="event-checkin-title">
+        <summary>Optional Luma ticket scanning</summary>
         <div class="panel-head">
           <h2 id="event-checkin-title">Event check-in · Luma</h2>
           <span id="event-scanner-status" class="muted" aria-live="polite">Scanner off</span>
@@ -87,7 +103,7 @@
             </form>
           </details>
         </details>
-      </section>
+      </details>
 
       <section class="grid">
         <article class="panel">
@@ -239,8 +255,8 @@
       </section>
     </div>
 
-    <script src="/static/event-checkin.js?v=20261030-vision1"></script>
-    <script src="/static/host-camera.js?v=20261030-vision1"></script>
-    <script src="/static/main.js?v=20261030-vision1"></script>
+    <script src="/static/event-checkin.js?v=20261030-greeter2"></script>
+    <script src="/static/host-camera.js?v=20261030-greeter2"></script>
+    <script src="/static/main.js?v=20261030-greeter2"></script>
   </body>
 </html>

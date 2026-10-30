@@ -72,6 +72,23 @@ def private_result(value):
     return JSONResponse(value, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
 
+@router.post("/event-greeter/start")
+async def event_greeter_start(request: Request, payload: HostWelcome | None = None):
+    require_dashboard_origin(request)
+    try:
+        return private_result(
+            await get_ctx(request).start_event_greeter(payload.greeting if payload else None)
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+
+
+@router.post("/event-greeter/stop")
+async def event_greeter_stop(request: Request):
+    require_dashboard_origin(request)
+    return private_result(await get_ctx(request).stop_event_greeter())
+
+
 @router.post("/event-checkin/host/start")
 async def luma_host_start(request: Request, payload: HostWelcome):
     require_dashboard_origin(request)

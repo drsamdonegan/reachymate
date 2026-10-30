@@ -8,6 +8,35 @@ let cameraSourceName = "Camera";
 let dashboardStartAttempted = false;
 let chatStartPending = false;
 let cameraHandedToLuma = false;
+let greeterStartAttempted = false;
+let greeterGreetingLoaded = false;
+let greeterActionError = '';
+
+async function startEventGreeter(useDefault = false) {
+  greeterActionError = '';
+  const payload = useDefault ? {} : {greeting: document.querySelector('#greeter-greeting').value};
+  try {
+    await fetchJson('/api/admin/event-greeter/start', {method:'POST',
+      ...(useDefault ? {} : {headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})});
+    await refreshVoice();
+  } catch (error) {
+    greeterActionError = error.message;
+    document.querySelector('#greeter-status').textContent = greeterActionError;
+  }
+}
+document.querySelector('#greeter-form').addEventListener('submit', event => {
+  event.preventDefault(); startEventGreeter();
+});
+document.querySelector('#greeter-stop').addEventListener('click', async () => {
+  try {
+    greeterActionError = '';
+    await fetchJson('/api/admin/event-greeter/stop', {method:'POST'});
+    await refreshVoice();
+  } catch (error) {
+    greeterActionError = error.message;
+    document.querySelector('#greeter-status').textContent = greeterActionError;
+  }
+});
 
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
@@ -84,6 +113,20 @@ async function refreshVoice() {
       : "";
     const realtime = diagnostics.voice || diagnostics.realtime;
     const conversation = diagnostics.conversation || {};
+    const greeter = diagnostics.greeter || {};
+    const greeterUnavailable = greeter.unavailable_reason || (movement?.error
+      ? `Movement fault (${movement.error}). Check USB and external power, then reopen the Reachy launcher.` : '');
+    if (!greeterGreetingLoaded && greeter.greeting) {
+      document.querySelector('#greeter-greeting').value = greeter.greeting;
+      greeterGreetingLoaded = true;
+    }
+    document.querySelector('#greeter-start').disabled = greeter.enabled || !!greeterUnavailable || conversation.camera_owner === 'luma';
+    document.querySelector('#greeter-stop').disabled = !greeter.enabled;
+    document.querySelector('#greeter-status').textContent = greeter.enabled
+      ? `${diagnostics.motion?.speech_motion_enabled === false ? 'Movement paused' : greeter.face_present ? 'Face detected · Following' : 'Looking for arrivals'} · ${greeter.welcomes} welcomes${greeter.error ? ` · ${greeter.error}` : ''}`
+      : greeterUnavailable || greeterActionError || 'Greeter off. Start it to watch for faces and welcome arrivals.';
+    const autoGreeter = !greeterStartAttempted && greeter.auto_start && !greeter.enabled && !greeterUnavailable && conversation.camera_owner !== 'luma';
+    greeterStartAttempted = true;
     cameraHandedToLuma = conversation.camera_owner === "luma" || conversation.pause_reason === "luma_express";
     document.querySelector("#start-voice-test").disabled = cameraHandedToLuma;
     document.querySelector("#motion-mode-notice").textContent = cameraHandedToLuma
@@ -107,7 +150,7 @@ async function refreshVoice() {
     const attended = conversation.mode === "attended_chat";
     document.querySelector("#start-voice-test").textContent = conversation.attended_available
       ? "Start chat" : "Start Voice Test";
-    document.querySelector("#stop-voice-test").disabled = !realtime?.running;
+    document.querySelector("#stop-voice-test").disabled = !realtime?.running && !greeter.enabled;
     document.querySelector("#voice-mode-notice").textContent = conversation.attended_available
       ? `${conversation.dashboard_auto_start ? "Opening this dashboard starts chat. " : ""}Chat streams Reachy's microphone to OpenAI until Stop chat or ${Math.ceil(conversation.max_seconds / 60)} minutes. Closing the tab does not stop chat; use Stop chat.${vision?.enabled ? " Visual questions send a fresh camera snapshot to OpenAI." : ""}`
       : "";
@@ -141,7 +184,12 @@ async function refreshVoice() {
       const duplex = realtime.full_duplex ? " · Full duplex" : "";
       status.textContent = `${realtime.api_label || "Realtime"} · ${realtime.model} connected${duplex} · ${focus}${mode}`;
     }
-    if (autoStart && !realtime?.running) await startVoiceChat();
+    if (greeter.enabled) {
+      status.textContent = `Event greeter · ${greeter.face_present ? 'Following a face' : 'Watching for arrivals'} · ${realtime?.running ? 'GPT-Live connected' : 'Voice starts for the next arrival'}`;
+      document.querySelector('#voice-mode-notice').textContent = 'Reachy owns his camera. Local detection controls turning and arrival welcomes; visual questions use fresh snapshots. Stop event greeter to finish.';
+    }
+    if (autoGreeter) await startEventGreeter(true);
+    else if (autoStart && !realtime?.running) await startVoiceChat();
   } catch (error) {
     document.querySelector("#voice-test-status").textContent = "Voice service unavailable. Open Start Reachy.command to start the local services.";
     document.querySelector("#voice-audio-status").textContent = "";

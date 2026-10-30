@@ -20,6 +20,8 @@ import soxr
 from app.config import Settings
 from app.services.live.prompt import (
     BACKEND_INSTRUCTIONS,
+    EVENT_GREETER_BACKEND_INSTRUCTIONS,
+    EVENT_GREETER_INSTRUCTIONS,
     EVENT_HOST_BACKEND_INSTRUCTIONS,
     EVENT_HOST_INSTRUCTIONS,
     EVENT_HOST_TOOLS,
@@ -27,6 +29,7 @@ from app.services.live.prompt import (
     LIVE_INSTRUCTIONS,
     LIVE_PROMPT_VERSION,
     VISION_INSTRUCTIONS,
+    event_greeter_context,
     event_host_greeting,
 )
 from app.services.realtime.session import (
@@ -42,16 +45,21 @@ logger = logging.getLogger(__name__)
 LIVE_AUDIO_RATE = 16_000
 
 
-def build_session_start(settings: Settings, *, host_greeting: str | None = None) -> dict:
+def build_session_start(
+    settings: Settings, *, host_greeting: str | None = None, greeter_greeting: str | None = None
+) -> dict:
     host = host_greeting is not None
+    greeter = greeter_greeting is not None
     schemas = tool_schemas(include_vision=settings.camera_vision_enabled)
-    if host:
+    if host or greeter:
         schemas = [tool for tool in schemas if tool["name"] in EVENT_HOST_TOOLS]
     return {
         "type": "session.start",
         "session": {
             "model": settings.openai_live_model,
-            "instructions": EVENT_HOST_INSTRUCTIONS
+            "instructions": EVENT_GREETER_INSTRUCTIONS
+            if greeter
+            else EVENT_HOST_INSTRUCTIONS
             + (
                 "\n\n" + VISION_INSTRUCTIONS
                 if settings.camera_vision_enabled
@@ -66,7 +74,11 @@ def build_session_start(settings: Settings, *, host_greeting: str | None = None)
                     "content": [
                         {
                             "type": "input_text",
-                            "text": event_host_greeting(host_greeting) if host else GREETING_INSTRUCTION,
+                            "text": event_greeter_context(greeter_greeting)
+                            if greeter
+                            else event_host_greeting(host_greeting)
+                            if host
+                            else GREETING_INSTRUCTION,
                         }
                     ],
                 }
@@ -79,7 +91,11 @@ def build_session_start(settings: Settings, *, host_greeting: str | None = None)
                 "type": "responses",
                 "responses": {
                     "model": settings.openai_live_backend_model,
-                    "instructions": EVENT_HOST_BACKEND_INSTRUCTIONS if host else BACKEND_INSTRUCTIONS,
+                    "instructions": EVENT_GREETER_BACKEND_INSTRUCTIONS
+                    if greeter
+                    else EVENT_HOST_BACKEND_INSTRUCTIONS
+                    if host
+                    else BACKEND_INSTRUCTIONS,
                     "tools": [dict(tool, strict=False) for tool in schemas],
                     "tool_choice": "auto",
                     "parallel_tool_calls": False,
@@ -96,6 +112,7 @@ class OpenAIGptLiveSession(OpenAIRealtimeSession):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.host_greeting: str | None = None
+        self.greeter_greeting: str | None = None
         self._writer.reserve_seconds = self.settings.live_playback_reserve_seconds
         self._input_resampler = soxr.ResampleStream(
             self.settings.sample_rate_hz, LIVE_AUDIO_RATE, 1, dtype="int16"
@@ -214,7 +231,11 @@ class OpenAIGptLiveSession(OpenAIRealtimeSession):
             self._running = True
             self._started_at = self._last_activity = time.monotonic()
             self._spawn(self._receive_loop(), "gpt-live-events")
-            await self._send_event(build_session_start(self.settings, host_greeting=self.host_greeting))
+            await self._send_event(
+                build_session_start(
+                    self.settings, host_greeting=self.host_greeting, greeter_greeting=self.greeter_greeting
+                )
+            )
             await asyncio.wait_for(self._configured.wait(), self.settings.realtime_open_timeout_seconds)
             if self._last_error or self._live_closed.is_set():
                 raise RuntimeError("GPT-Live rejected the session configuration")
@@ -495,7 +516,9 @@ class OpenAIGptLiveSession(OpenAIRealtimeSession):
             if generation != self._generation or self._live_closing:
                 return
             call_id, name = item["call_id"], str(item.get("name"))
-            if self.host_greeting is not None and name not in EVENT_HOST_TOOLS:
+            if (
+                self.host_greeting is not None or self.greeter_greeting is not None
+            ) and name not in EVENT_HOST_TOOLS:
                 result = {"status": "unavailable", "reason": "event_host_mode"}
             else:
                 result = await self.tools.execute(name, str(item.get("arguments") or "{}"), call_id=call_id)

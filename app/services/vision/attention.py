@@ -173,6 +173,8 @@ class AttentionService:
         self.heartbeat = Heartbeat(0.1)
         self.worker = SupervisedTask("face-attention", self._run, heartbeat=self.heartbeat)
         self.enabled = False
+        self.last_visible_face_at = -float("inf")
+        self.auto_tracking_enabled = True
         self.degraded_reason = None if calibration else "camera_calibration_unmeasured"
         if calibration is not None and not calibration.measured:
             self.degraded_reason = "sdk_intrinsics_unmeasured_demo"
@@ -190,6 +192,8 @@ class AttentionService:
 
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = enabled
+        if not enabled:
+            self.last_visible_face_at = -float("inf")
         if not enabled and self.tracker:
             self.tracker.reset()
 
@@ -197,7 +201,7 @@ class AttentionService:
         while True:
             if self.enabled and self.tracker:
                 observation = await asyncio.to_thread(self._detect)
-                if observation is not None and self.on_face is not None:
+                if observation is not None and self.on_face is not None and self.auto_tracking_enabled:
                     await self.on_face(observation.bbox)
                 self.heartbeat.beat()
             await asyncio.sleep(0.1)
@@ -220,6 +224,8 @@ class AttentionService:
                 int(w * width / 640),
                 int(h * height / 360),
             )
+        if any(face.bbox[2] >= self.tracker.calibration.zone_width * 0.8 for face in faces):
+            self.last_visible_face_at = time.monotonic()
         observation = self.tracker.update(faces)
         if observation and self.mouth:
             from dataclasses import replace

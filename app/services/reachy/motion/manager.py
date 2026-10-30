@@ -154,10 +154,21 @@ class MotionManager:
                 else 0,
             }
 
-    def set_tracking_target(self, pose) -> None:
+    def set_tracking_target(self, pose, *, autonomous: bool = False) -> bool:
         with self._lock:
+            if autonomous:
+                if (
+                    self.mode != MotionMode.ENGAGED
+                    or not self._idle_motion_enabled
+                    or self._expression is not None
+                    or self.in_flight
+                ):
+                    return False
+                self._held_frame = None
             if self.mode != MotionMode.CAPTURE_FREEZE:
                 self.target = clamp_pose(pose)
+                return True
+            return False
 
     def set_speech_offsets(self, offsets) -> None:
         with self._lock:
@@ -229,9 +240,9 @@ class MotionManager:
                         try:
                             candidate = safe_frame(requested, previous, 0.02)
                             if not reachable_joints(kinematics.ik(candidate.head, body_yaw=candidate.body)):
-                                requested = base
+                                requested = previous
                         except ValueError:
-                            requested = base
+                            requested = previous
                     frame = safe_frame(requested, previous, 0.02)
                     self.mini.set_target(head=frame.head, antennas=frame.antennas, body_yaw=frame.body)
                     with self._lock:

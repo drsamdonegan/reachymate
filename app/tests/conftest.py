@@ -24,6 +24,8 @@ def settings(tmp_path) -> Settings:
         mlai_backend_url="http://testserver",
         mlai_backend_api_key="test-key",
         allow_dev_endpoints=True,
+        dashboard_auto_greeter=False,
+        event_greeter_greeting="Welcome to the demo!",
         cooldown_seconds=0,
         access_mode="enforce",  # legacy simulated actuator tests; hardware default remains shadow
     )

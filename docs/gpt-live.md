@@ -37,6 +37,11 @@ The fixed biometric notice uses a local recording. Its consent window mutes clou
 
 ## Camera questions
 
+The [automatic event greeter](event-greeter.md) owns Reachy's native camera, follows locally detected
+faces and requests an approved welcome on arrival. Its voice session starts silently until a person
+speaks or the controller requests a welcome. It offers motion, camera inspection, waiting and ending;
+access, routing and ticket actions are excluded. Local presence detection never uploads images itself.
+
 The staging `--demo` launcher enables `CAMERA_VISION_ENABLED` for attended chat. Ask **What can you see?**, **What am I holding?** or **What color is this?** The voice model delegates to a ninth typed tool, `inspect_camera`, which reads the existing Reachy camera owner and prepares a fresh JPEG in memory. It waits briefly for a requested movement to finish, limits the image to 1280 pixels and 512 KiB, and accepts no file paths or external image URLs. Capture is unavailable outside active attended chat, during local consent, or with a non-Reachy camera.
 
 The application returns all pending function results, queues the image as a Responses `input_image` using `response.item.create`, then continues the backend with `response.create`. `gpt-6-luna` interprets the image and GPT-Live speaks its findings. The audio frontend receives no direct images. This follows [OpenAI's visual context guidance](https://developers.openai.com/api/docs/guides/live-delegation#add-images-and-visual-context).

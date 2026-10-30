@@ -1,5 +1,8 @@
 # Luma event check-in
 
+For face-following welcomes without tickets, use the [event greeter](event-greeter.md). Luma controls
+are optional and collapsed in the dashboard; stop the greeter before handing its camera to Luma.
+
 The dashboard offers **automatic single-ticket check-in through Luma Express** and the original assisted
 scanner. Both use Reachy's existing USB camera. Luma records attendance; a locally decoded QR or approved
 registration alone never means someone is checked in.

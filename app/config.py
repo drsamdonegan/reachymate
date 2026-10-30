@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     live_playback_reserve_seconds: float = Field(default=0.2, ge=0, le=0.4)
     attended_chat_enabled: bool = False
     dashboard_auto_chat: bool = False
+    dashboard_auto_greeter: bool = False
+    event_greeter_greeting: str = Field(default="Welcome to the hackathon!", min_length=1, max_length=300)
     camera_vision_enabled: bool = False
     luma_api_key: SecretStr | None = None
     luma_event_id: str = ""

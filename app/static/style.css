@@ -156,6 +156,8 @@ summary { cursor: pointer; font-weight: 600; }
   border-bottom: 1px solid rgba(212, 221, 229, 0.55);
 }
 
+#greeter-status { min-height: 0; }
+
 .feed-entry:last-child, .event-card:last-child {
   border-bottom: 0;
 }

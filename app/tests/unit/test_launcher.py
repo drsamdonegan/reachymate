@@ -8,6 +8,17 @@ from app.config import Settings
 from app.scripts import launch_reachy as launcher
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_launcher_starts_or_reuses_opted_in_event_greeter(monkeypatch, enabled):
+    responses = [{"greeter": {"auto_start": True, "enabled": enabled}}, {"enabled": True}]
+    request = Mock(side_effect=responses)
+    monkeypatch.setattr(launcher, "request_json", request)
+    assert launcher.connect_chat()
+    assert request.call_count == (1 if enabled else 2)
+    if not enabled:
+        assert request.call_args.args[0].endswith("/event-greeter/start")
+
+
 def test_dashboard_auto_chat_requires_attended_staging_profile():
     assert not Settings(_env_file=None).dashboard_auto_chat
     with pytest.raises(ValidationError, match="auto chat requires attended"):
@@ -25,6 +36,16 @@ def test_dashboard_auto_chat_requires_attended_staging_profile():
     for override in ({"app_env": "production"}, {"physical_unlock_enabled": True}, {"voice_api": "realtime"}):
         with pytest.raises(ValidationError):
             Settings(**(profile | override))
+
+
+def test_luma_camera_handoff_overrides_greeter_startup_preference(monkeypatch):
+    request = Mock(return_value={
+        "greeter": {"auto_start": True, "enabled": False},
+        "conversation": {"camera_owner": "luma", "pause_reason": "luma_express"},
+    })
+    monkeypatch.setattr(launcher, "request_json", request)
+    assert not launcher.connect_chat()
+    request.assert_called_once()
 
 
 def test_ready_stack_is_reused_without_creating_duplicate_media_owners(monkeypatch, tmp_path):

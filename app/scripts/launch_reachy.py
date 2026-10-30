@@ -189,9 +189,17 @@ def connect_chat() -> bool:
     diagnostics = request_json(f"{DASHBOARD_URL}/api/admin/diagnostics/audio")
     conversation = diagnostics.get("conversation", {})
     voice = diagnostics.get("voice", {})
+    greeter = diagnostics.get("greeter", {})
     if conversation.get("pause_reason") == "luma_express" or conversation.get("camera_owner") == "luma":
         print("Luma owns the camera; use the dashboard's GPT-Live host controls for voice.", flush=True)
         return False
+    if greeter.get("enabled") or greeter.get("auto_start"):
+        if not greeter.get("enabled"):
+            result = request_json(f"{DASHBOARD_URL}/api/admin/event-greeter/start", method="POST", timeout=45)
+            if not result.get("enabled"):
+                raise LaunchError("The event greeter could not start. Check the dashboard.")
+        print("Event greeter active: Reachy watches for arrivals and welcomes them.", flush=True)
+        return True
     if not (
         voice.get("api") == "gpt_live"
         and conversation.get("attended_available")

@@ -32,6 +32,11 @@ Connect USB, turn on external power, then double-click **[Start Reachy.command](
 
 During a Luma camera handoff, reopening the dashboard or launcher preserves the current mode. Use **Start GPT-Live host** for voice alongside the scanner. An app restart always leaves host voice off until explicitly started again.
 
+For automatic welcomes without ticket scanning, use **Start event greeter**. Reachy detects faces locally,
+turns toward people and welcomes an arrival once, then re-arms after they leave. **Stop event greeter**
+stops both watching and voice. The private `DASHBOARD_AUTO_GREETER=true` preference makes the launcher
+or a newly opened dashboard start this mode. See [event greeter setup and testing](docs/event-greeter.md).
+
 Camera and microphone permissions must be granted to Terminal. This launcher uses the existing `.venv`, `.env` and provisioned assets; it never installs packages or changes system login settings. Startup logs are private under `.codex-runtime-logs/launcher-*.log`. Repeated launches reuse healthy services; conflicting ports, missing power or a failed dependency produce a diagnostic instead of starting duplicate hardware owners.
 
 The same launcher is available from a terminal:
@@ -49,7 +54,7 @@ For manual service management, run the no-media daemon separately, the loopback 
 .venv/bin/python -m app.scripts.run_reachy_live_test --demo
 ```
 
-The demo profile uses loopback front-desk/bookings mocks and forces shadow mode. Without measured camera calibration it uses SDK intrinsics for detection-only conversation, reports degraded attention, and disables face-directed motion. Its bench-only joint-settling allowance is 0.18 rad; normal profiles retain 0.10 rad, and every profile still verifies torque off and the sleep head pose. This demo does not grant biometric consent or approve hardware deployment. Complete camera calibration and direction surveys before live conversation acceptance.
+The demo profile uses loopback front-desk/bookings mocks and forces shadow mode. Without measured camera calibration it uses SDK intrinsics for detection-only conversation, reports degraded attention, and disables calibrated world-coordinate face tracking. The explicit event greeter uses its separate bounded image-position controller. Its bench-only joint-settling allowance is 0.18 rad; normal profiles retain 0.10 rad, and every profile still verifies torque off and the sleep head pose. This demo does not grant biometric consent or approve hardware deployment. Complete camera calibration and direction surveys before live conversation acceptance.
 
 The launcher selects `VOICE_API=gpt_live` and `TTS_ENGINE=live`. Cloud voice still uses the existing `REALTIME_ENABLED` enable switch and `REALTIME_SAFETY_IDENTIFIER_KEY` secret. The previous Realtime transport remains explicitly selectable with `VOICE_API=realtime`; connection failures do not switch APIs automatically. See [GPT-Live transport](docs/gpt-live.md) for configuration, lifecycle and diagnostics.
 
