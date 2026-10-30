@@ -20,10 +20,14 @@ import soxr
 from app.config import Settings
 from app.services.live.prompt import (
     BACKEND_INSTRUCTIONS,
+    EVENT_HOST_BACKEND_INSTRUCTIONS,
+    EVENT_HOST_INSTRUCTIONS,
+    EVENT_HOST_TOOLS,
     GREETING_INSTRUCTION,
     LIVE_INSTRUCTIONS,
     LIVE_PROMPT_VERSION,
     VISION_INSTRUCTIONS,
+    event_host_greeting,
 )
 from app.services.realtime.session import (
     OpenAIRealtimeSession,
@@ -38,18 +42,34 @@ logger = logging.getLogger(__name__)
 LIVE_AUDIO_RATE = 16_000
 
 
-def build_session_start(settings: Settings) -> dict:
+def build_session_start(settings: Settings, *, host_greeting: str | None = None) -> dict:
+    host = host_greeting is not None
+    schemas = tool_schemas(include_vision=settings.camera_vision_enabled and not host)
+    if host:
+        schemas = [tool for tool in schemas if tool["name"] in EVENT_HOST_TOOLS]
+        motion = next(tool for tool in schemas if tool["name"] == "robot_motion")
+        motion["description"] = "Move gently to look around, discover capabilities, or stop. No vision."
+        props = motion["parameters"]["properties"]
+        props["action"]["enum"] = ["capabilities", "look", "stop"]
+        props["duration_seconds"]["maximum"] = 8
+        props["repeat"]["maximum"] = 1
     return {
         "type": "session.start",
         "session": {
             "model": settings.openai_live_model,
-            "instructions": LIVE_INSTRUCTIONS
-            + ("\n\n" + VISION_INSTRUCTIONS if settings.camera_vision_enabled else ""),
+            "instructions": EVENT_HOST_INSTRUCTIONS
+            if host
+            else LIVE_INSTRUCTIONS + ("\n\n" + VISION_INSTRUCTIONS if settings.camera_vision_enabled else ""),
             "input": [
                 {
                     "type": "message",
                     "role": "developer",
-                    "content": [{"type": "input_text", "text": GREETING_INSTRUCTION}],
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": event_host_greeting(host_greeting) if host else GREETING_INSTRUCTION,
+                        }
+                    ],
                 }
             ],
             "audio": {
@@ -60,11 +80,8 @@ def build_session_start(settings: Settings) -> dict:
                 "type": "responses",
                 "responses": {
                     "model": settings.openai_live_backend_model,
-                    "instructions": BACKEND_INSTRUCTIONS,
-                    "tools": [
-                        dict(tool, strict=False)
-                        for tool in tool_schemas(include_vision=settings.camera_vision_enabled)
-                    ],
+                    "instructions": EVENT_HOST_BACKEND_INSTRUCTIONS if host else BACKEND_INSTRUCTIONS,
+                    "tools": [dict(tool, strict=False) for tool in schemas],
                     "tool_choice": "auto",
                     "parallel_tool_calls": False,
                     "reasoning": {"effort": "low"},
@@ -79,6 +96,7 @@ def build_session_start(settings: Settings) -> dict:
 class OpenAIGptLiveSession(OpenAIRealtimeSession):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
+        self.host_greeting: str | None = None
         self._writer.reserve_seconds = self.settings.live_playback_reserve_seconds
         self._input_resampler = soxr.ResampleStream(
             self.settings.sample_rate_hz, LIVE_AUDIO_RATE, 1, dtype="int16"
@@ -127,7 +145,8 @@ class OpenAIGptLiveSession(OpenAIRealtimeSession):
                 image_generation != self._generation
                 or self._live_closing
                 or self._input_suspended
-                or self.vision_allowed is not None and not self.vision_allowed()
+                or self.vision_allowed is not None
+                and not self.vision_allowed()
             ):
                 return False
             await self.connection.send(json.dumps(event, separators=(",", ":")))
@@ -196,7 +215,7 @@ class OpenAIGptLiveSession(OpenAIRealtimeSession):
             self._running = True
             self._started_at = self._last_activity = time.monotonic()
             self._spawn(self._receive_loop(), "gpt-live-events")
-            await self._send_event(build_session_start(self.settings))
+            await self._send_event(build_session_start(self.settings, host_greeting=self.host_greeting))
             await asyncio.wait_for(self._configured.wait(), self.settings.realtime_open_timeout_seconds)
             if self._last_error or self._live_closed.is_set():
                 raise RuntimeError("GPT-Live rejected the session configuration")
@@ -477,7 +496,10 @@ class OpenAIGptLiveSession(OpenAIRealtimeSession):
             if generation != self._generation or self._live_closing:
                 return
             call_id, name = item["call_id"], str(item.get("name"))
-            result = await self.tools.execute(name, str(item.get("arguments") or "{}"), call_id=call_id)
+            if self.host_greeting is not None and name not in EVENT_HOST_TOOLS:
+                result = {"status": "unavailable", "reason": "event_host_mode"}
+            else:
+                result = await self.tools.execute(name, str(item.get("arguments") or "{}"), call_id=call_id)
             if name == "inspect_camera" and result.get("status") == "ready":
                 result, view = await self._prepare_camera_view(result)
                 if view is not None:
@@ -743,7 +765,9 @@ class OpenAIGptLiveSession(OpenAIRealtimeSession):
             "finalization_confirmed": self._finalization_confirmed,
             "backend_pending": len(self._backend_pending),
             "vision": {
-                "enabled": self.settings.camera_vision_enabled and self.vision_snapshot_provider is not None,
+                "enabled": self.host_greeting is None
+                and self.settings.camera_vision_enabled
+                and self.vision_snapshot_provider is not None,
                 "mode": "on_request",
                 "images_sent": self._vision_images_sent,
                 "last_image_age_seconds": round(time.monotonic() - self._last_vision_sent_at, 1)

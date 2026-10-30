@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="referrer" content="no-referrer" />
     <title>Reachy Office Bouncer</title>
-    <link rel="stylesheet" href="/static/style.css?v=20261030-express3" />
+    <link rel="stylesheet" href="/static/style.css?v=20261030-host2" />
   </head>
   <body>
     <div class="page">
@@ -34,7 +34,21 @@
         <p id="event-express-status" class="output" aria-live="polite">Select an event to begin.</p>
         <p class="muted">In Chrome, choose <strong>Settings → Privacy and security → Site settings → Camera → Reachy Mini Camera</strong>, then reload Luma and allow camera access. Cover Reachy’s lens briefly to confirm the preview darkens.</p>
         <p class="muted">After opening or reloading Luma, choose <strong>Scanner Options → Express → Confirm</strong> and check <strong>Express Mode On</strong>. Single tickets are recorded automatically; group tickets still need selection. No API key is needed.</p>
-        <p class="muted">Reachy’s chat, face checks and local camera preview pause during the handoff. Luma controls its own camera session: close every Luma scanner tab before returning the camera. Closing this dashboard does not stop Luma.</p>
+        <p class="muted">Face checks and Reachy’s camera preview pause during the handoff. Luma controls its own camera session: close every Luma scanner tab before returning the camera. Closing this dashboard does not stop Luma.</p>
+        <div id="event-host-controls" hidden>
+          <h3>GPT-Live event host</h3>
+          <form id="event-host-form" class="stack">
+            <label for="event-host-greeting">Welcome message</label>
+            <input id="event-host-greeting" maxlength="300" required value="Welcome to the event! Please show me your QR code ticket!" />
+            <button id="event-host-start" type="submit">Start GPT-Live host</button>
+          </form>
+          <div class="inline wrap">
+            <button id="event-host-welcome" disabled>Say welcome again</button>
+            <button id="event-host-stop" disabled>Stop host voice</button>
+          </div>
+          <p id="event-host-status" class="output" aria-live="polite"></p>
+          <p class="muted">Streams Reachy’s microphone to OpenAI until Stop or the chat time limit shown below. You can interrupt, ask it to welcome guests, or say “look around”. Looking moves the head; it cannot find faces or see ticket results while Luma scans. Use Stop host voice when finished; closing the dashboard does not stop voice. Restart the host to use an edited welcome.</p>
+        </div>
         <button id="event-express-finish" hidden>Luma scanner is closed — return camera to Reachy</button>
         <p id="event-express-error" role="status"></p>
         <details id="event-assisted-panel">
@@ -110,7 +124,7 @@
         <article class="panel">
           <h2>Actions</h2>
           <h3>Robot movements</h3>
-          <p class="muted">Start a voice test, then ask Roo to look around, dance, nod or wiggle his antennas.</p>
+          <p id="motion-mode-notice" class="muted">Start a voice test, then ask Roo to look around, dance, nod or wiggle his antennas.</p>
           <form id="robot-request-form" class="stack">
             <label for="robot-request-text">Ask Roo (text)</label>
             <div class="inline">
@@ -210,7 +224,7 @@
       </section>
     </div>
 
-    <script src="/static/event-checkin.js?v=20261030-express3"></script>
-    <script src="/static/main.js?v=20261030-express3"></script>
+    <script src="/static/event-checkin.js?v=20261030-host2"></script>
+    <script src="/static/main.js?v=20261030-host2"></script>
   </body>
 </html>

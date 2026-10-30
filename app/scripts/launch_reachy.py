@@ -189,8 +189,8 @@ def connect_chat() -> bool:
     diagnostics = request_json(f"{DASHBOARD_URL}/api/admin/diagnostics/audio")
     conversation = diagnostics.get("conversation", {})
     voice = diagnostics.get("voice", {})
-    if conversation.get("pause_reason") == "luma_express":
-        print("Luma camera handoff is active; leaving voice and camera paused.", flush=True)
+    if conversation.get("pause_reason") == "luma_express" or conversation.get("camera_owner") == "luma":
+        print("Luma owns the camera; use the dashboard's GPT-Live host controls for voice.", flush=True)
         return False
     if not (
         voice.get("api") == "gpt_live"
@@ -226,7 +226,7 @@ def launch(root: Path = ROOT, *, open_browser: bool = True) -> None:
         print("Microphone live to OpenAI. Camera snapshots are sent only on visual questions.")
         print("Stop chat ends the session; reopening the dashboard starts it again (ten-minute cap).")
     else:
-        print("Luma owns the camera. Close its scanner, then return the camera from the dashboard.")
+        print("Luma owns the camera. Host voice can run alongside it from the dashboard.")
     print("Services stay running when you close this Terminal. Door actions remain shadow-only.")
 
 

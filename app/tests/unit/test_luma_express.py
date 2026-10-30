@@ -22,9 +22,11 @@ def test_handoff_survives_restart_and_only_explicit_finish_clears_it(tmp_path):
     path = tmp_path / "handoff.json"
     handoff = LumaExpressHandoff(path)
     handoff.begin("evt-demo")
+    handoff.host_voice = True
     assert path.stat().st_mode & 0o777 == 0o600
     restored = LumaExpressHandoff(path)
     assert restored.active and not restored.ready
+    assert not restored.host_voice
     assert restored.snapshot()["url"] == "https://luma.com/check-in/evt-demo/scan"
     with pytest.raises(ValueError, match="before changing events"):
         restored.begin("evt-other")
@@ -256,8 +258,15 @@ async def test_handoff_finishes_inflight_wake_then_stops_and_rejects_future_wake
         await ctx.stop()
 
 
-def test_launcher_does_not_restart_chat_during_persisted_handoff(monkeypatch):
-    request = Mock(return_value={"conversation": {"pause_reason": "luma_express"}})
+@pytest.mark.parametrize(
+    "conversation",
+    [
+        {"pause_reason": "luma_express"},
+        {"pause_reason": None, "camera_owner": "luma", "mode": "event_host"},
+    ],
+)
+def test_launcher_does_not_restart_chat_during_persisted_handoff(monkeypatch, conversation):
+    request = Mock(return_value={"conversation": conversation})
     monkeypatch.setattr(launch_reachy, "request_json", request)
     assert launch_reachy.connect_chat() is False
     request.assert_called_once_with("http://127.0.0.1:8080/api/admin/diagnostics/audio")
@@ -270,20 +279,30 @@ def test_express_admin_api_requires_explicit_scanner_closed(settings):
     app.include_router(router)
     app.state.context = ctx
     with TestClient(app) as client:
-        assert client.post(
-            "/api/admin/event-checkin/express/start", headers={"Origin": "https://example.com"}
-        ).status_code == 403
+        assert (
+            client.post(
+                "/api/admin/event-checkin/express/start", headers={"Origin": "https://example.com"}
+            ).status_code
+            == 403
+        )
         assert not ctx.luma_express.active
         response = client.post("/api/admin/event-checkin/express/start")
         assert response.status_code == 200 and response.json()["express"]["camera_released"]
         assert response.headers["cache-control"] == "no-store"
-        assert client.post(
-            "/api/admin/event-checkin/express/finish", json={"scanner_closed": "true"}
-        ).status_code == 422
-        assert client.post(
-            "/api/admin/event-checkin/express/finish", json={"scanner_closed": True},
-            headers={"Origin": "https://example.com"},
-        ).status_code == 403
+        assert (
+            client.post(
+                "/api/admin/event-checkin/express/finish", json={"scanner_closed": "true"}
+            ).status_code
+            == 422
+        )
+        assert (
+            client.post(
+                "/api/admin/event-checkin/express/finish",
+                json={"scanner_closed": True},
+                headers={"Origin": "https://example.com"},
+            ).status_code
+            == 403
+        )
         assert ctx.luma_express.active
         assert (
             client.post("/api/admin/event-checkin/express/finish", json={"scanner_closed": False}).status_code

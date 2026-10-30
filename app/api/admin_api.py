@@ -34,6 +34,10 @@ class CameraReturn(BaseModel):
     scanner_closed: StrictBool
 
 
+class HostWelcome(BaseModel):
+    greeting: str = Field(min_length=1, max_length=300)
+
+
 def require_dashboard_origin(request: Request) -> None:
     origin = request.headers.get("origin")
     if origin is not None and origin != str(request.base_url).rstrip("/"):
@@ -62,6 +66,30 @@ async def luma_express_finish(request: Request, payload: CameraReturn):
 
 def private_result(value):
     return JSONResponse(value, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+
+
+@router.post("/event-checkin/host/start")
+async def luma_host_start(request: Request, payload: HostWelcome):
+    require_dashboard_origin(request)
+    try:
+        return private_result(await get_ctx(request).start_luma_host(payload.greeting))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+
+
+@router.post("/event-checkin/host/stop")
+async def luma_host_stop(request: Request):
+    require_dashboard_origin(request)
+    return private_result(await get_ctx(request).stop_luma_host())
+
+
+@router.post("/event-checkin/host/welcome")
+async def luma_host_welcome(request: Request):
+    require_dashboard_origin(request)
+    try:
+        return private_result(await get_ctx(request).welcome_luma_guest())
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
 
 
 async def event_action(request, action, *args):

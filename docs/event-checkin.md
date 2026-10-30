@@ -42,6 +42,28 @@ power, restart the Reachy app if it entered a hardware fault, then prepare the h
 confirm the Reachy camera and re-enable Express Mode. While the handoff is active, hardware-fault recovery
 does not restart audio or reset USB underneath Chrome's scanner.
 
+## GPT-Live host alongside Express
+
+After preparing the handoff, enter a welcome in the existing dashboard and click **Start GPT-Live host**.
+Reachy greets guests and listens through his USB microphone while Luma keeps the camera. Use **Say welcome
+again**, ask him aloud to welcome the next guest, or send a request through **Ask Roo (text)**. A greeting
+is an invitation to scan, never a confirmation that a ticket was accepted. No Luma API key is needed.
+
+Ask “look around”, “look left”, or “stop moving”. The model calls the existing motion controller, limited
+to a single look sequence of at most eight seconds. “Look for a face” can trigger looking around, but
+there is no face detection, identity matching, model image upload, dance, or door action in this mode.
+Luma's preview moves with the head; use looking between tickets and let Reachy settle before scanning.
+
+The host streams microphone audio to OpenAI even without a face in view, including while speaking.
+**Stop host voice** or **Stop chat** stops both the cloud session and local audio without releasing
+Luma's camera. The attended chat limit applies (ten minutes by default). Closing the dashboard does not
+stop voice. Reloading it or reopening the launcher preserves the current mode; restarting the app leaves
+host voice off. A cloud disconnect or audio failure also stops the host, and USB recovery is blocked
+while Luma owns the camera. Resolve the audio issue and explicitly restart the host to retry.
+
+Welcome edits apply on the next host start and last for the current app run. Set `LUMA_HOST_GREETING`
+in the private `.env` for a persistent default, then restart the app. Keep real event configuration private.
+
 ## Optional assisted scanner setup
 
 1. Install the existing `vision` extra (`uv sync --frozen --extra vision --extra audio --extra reachy --extra skills --extra dev`). QR decoding uses OpenCV; no separate scanner hardware is needed.
@@ -72,7 +94,10 @@ or an organiser-controlled test registration; do not test on an absent real gues
 | Express handoff | Start chat, then open automatic check-in. Voice closes, camera preview pauses, and the Luma scanner opens after the device is released. |
 | Browser setup | Confirm Reachy Mini Camera physically and **Express Mode On**. Neither is inferred from the dashboard's handoff flag. |
 | Automatic single ticket | Present an organiser-controlled ticket or a consenting attendee who is present. Luma records the check-in without a confirmation click; its Checked In list/count updates. |
-| Reload and restart | Reload the dashboard, reopen the launcher and restart the app while Luma owns the camera. No cloud voice or local camera capture restarts. |
+| Reload and restart | Reload the dashboard or reopen the launcher: the current host mode is preserved. Restart the app: host voice stays off and local camera capture stays blocked. |
+| Host voice | Start GPT-Live host, hear the welcome, then interrupt it. Input/output overlap increases in voice diagnostics and Luma still shows Express Mode with a live preview. |
+| Look around | Ask for a face or a look-around. A short motion runs; no face detection or camera image is sent to the model. Stop movement cancels it. |
+| Stop and faults | Stop host voice, expire its time limit, or disconnect cloud voice. Microphone capture ends, the handoff remains, and no automatic voice/USB restart occurs. |
 | Return to chat | Close all Luma scanner tabs and return the camera. Start chat explicitly; confirm normal camera and voice work again. |
 | Local QR decoding | Show a Luma ticket to the USB camera; its official check-in link appears. Pasting the decoded URL is also available for troubleshooting. |
 | Wrong event / random QR | Rejected without following the URL or contacting a different host. |
@@ -81,13 +106,13 @@ or an organiser-controlled test registration; do not test on an absent real gues
 | Confirm in Luma, then Verify | Actual ticket timestamps appear; Luma's own guest list shows the same attendance. |
 | Multi-ticket guest | Individual statuses stay visible. Partial attendance never becomes a whole-group confirmation. |
 | API unavailable / no key | Explicit unverified/error state; attendance can still be handled in Luma directly. |
-| Assisted voice and camera ownership | Chat continues while local assisted scanning; model camera requests are unavailable. Stop chat keeps the explicitly started scanner active. Stop scanning releases an otherwise idle camera. Express pauses chat instead. |
+| Assisted voice and camera ownership | Chat continues while local assisted scanning; model camera requests are unavailable. Stop chat keeps the explicitly started scanner active. Stop scanning releases an otherwise idle camera. Express requires explicit host voice opt-in. |
 | Privacy | No ticket keys or guest names in telemetry. Next guest, expiry and shutdown clear the current ticket. |
 
 Run the automated decoder, API contract, cancellation and dashboard endpoint checks with:
 
 ```sh
-uv run pytest app/tests/unit/test_event_checkin.py app/tests/unit/test_luma_express.py app/tests/unit/test_configure_luma.py app/tests/unit/test_model_vision.py -q
+uv run pytest app/tests/unit/test_event_checkin.py app/tests/unit/test_luma_express.py app/tests/unit/test_luma_host.py app/tests/unit/test_configure_luma.py app/tests/unit/test_model_vision.py -q
 ```
 
 ## Boundaries and API evidence

@@ -65,6 +65,8 @@ class ConversationCoordinator:
         self._local_only_until = 0.0
         self._wake_lock = asyncio.Lock()
         self.suspended = False
+        self.event_host = False
+        self.host_connected = False
         self._track_ref: str | None = None
         self._pending_track_ref: str | None = None
         self._track_changed_at: float | None = None
@@ -82,10 +84,17 @@ class ConversationCoordinator:
     def diagnostics(self) -> dict[str, Any]:
         return {
             "attended_available": self.settings.attended_chat_enabled,
-            "dashboard_auto_start": self.settings.dashboard_auto_chat and not self.suspended,
+            "dashboard_auto_start": self.settings.dashboard_auto_chat
+            and not self.suspended
+            and not self.event_host,
             "pause_reason": "luma_express" if self.suspended else None,
+            "camera_owner": "luma" if self.suspended or self.event_host else "reachy",
             "max_seconds": self.settings.attended_chat_max_seconds,
-            "mode": "attended_chat" if self.attended_chat_active else "concierge",
+            "mode": "event_host"
+            if self.event_host
+            else "attended_chat"
+            if self.attended_chat_active
+            else "concierge",
             "remaining_seconds": round(max(0, self._attended_until - time.monotonic()))
             if self.attended_chat_active
             else 0,
@@ -93,7 +102,7 @@ class ConversationCoordinator:
 
     async def handle_wake(self, *, attended: bool = False) -> None:
         async with self._wake_lock:
-            if self.suspended:
+            if self.suspended or (self.event_host and not attended):
                 return
             if getattr(self.state_machine, "state", None) == AppState.SAFE_HOLD:
                 return
@@ -186,7 +195,7 @@ class ConversationCoordinator:
         return self.realtime.feed_audio(chunk)
 
     async def request_access_check(self) -> dict[str, Any]:
-        if self.suspended:
+        if self.suspended or self.event_host:
             return {"status": "unavailable"}
         if not self._engaged:
             return {"status": "unavailable"}
@@ -213,6 +222,8 @@ class ConversationCoordinator:
             return
         if command == CommandIntent.CANCEL:
             await self._end_visitor(reason="visitor_cancelled")
+            return
+        if self.event_host:
             return
         if not self._engaged:
             return
@@ -345,6 +356,14 @@ class ConversationCoordinator:
         while self._engaged:
             await asyncio.sleep(0.25)
             now = time.monotonic()
+            if (
+                self.event_host
+                and self.host_connected
+                and self.realtime is not None
+                and not self.realtime.running
+            ):
+                await self._end_visitor(reason="event_host_disconnected")
+                return
             if self._attended_until and now >= self._attended_until:
                 await self._end_visitor(reason="attended_chat_expired")
                 return

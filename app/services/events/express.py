@@ -15,6 +15,10 @@ class LumaExpressHandoff:
         self.path = state_path
         self.active = bool(state_path and state_path.exists())
         self.ready = False
+        # Voice is an explicit, attended opt-in and never restored from disk.
+        self.host_voice = False
+        self.host_error = None
+        self.host_greeting = "Welcome to the event! Please show me your QR code ticket!"
         self.event_id = None
         if self.active:
             try:
@@ -56,4 +60,7 @@ class LumaExpressHandoff:
             # Browser camera permission, camera selection and Express Mode are controlled by Luma/Chrome.
             "url": f"https://luma.com/check-in/{self.event_id}/scan" if self.event_id else None,
             "requires_browser_setup": True,
+            "host_voice": self.host_voice,
+            "host_error": self.host_error,
+            "host_greeting": self.host_greeting,
         }

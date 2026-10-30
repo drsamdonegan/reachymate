@@ -4,6 +4,8 @@
   let refreshing = false;
   let revision = 0;
   let handoffPending = false;
+  let hostPending = false;
+  let greetingEdited = false;
   const labels = {
     unverified: 'Ticket scanned. Complete check-in in Luma; attendance is not verified here yet.',
     awaiting_luma: 'Ticket found. Complete check-in in Luma, then verify below.',
@@ -14,6 +16,14 @@
   function render(data) {
     const express = data.express || {};
     const external = !!express.active;
+    element('event-host-controls').hidden = !external;
+    element('event-host-start').disabled = !express.camera_released || express.host_voice || hostPending;
+    element('event-host-stop').disabled = !express.host_voice || hostPending;
+    element('event-host-welcome').disabled = !express.host_voice || hostPending;
+    if (!greetingEdited && express.host_greeting) element('event-host-greeting').value = express.host_greeting;
+    element('event-host-status').textContent = express.host_error || (express.host_voice
+      ? 'GPT-Live host is on · microphone live · Luma keeps scanning.'
+      : 'Host voice is off. Start it for a welcome and interruptible conversation while Luma scans.');
     currentScan = data.current?.scan_id || null;
     element('event-scanner-status').textContent = external ? 'Camera reserved for Luma' : data.scanning
       ? `Scanning · ${data.camera_source} · ${Math.ceil(data.remaining_seconds / 60)} min left` : 'Scanner off';
@@ -32,7 +42,7 @@
     else reopen.removeAttribute('href');
     element('event-express-status').textContent = external
       ? express.camera_released
-        ? 'Reachy has released the camera and paused chat. In Luma, confirm Reachy Mini Camera and Express Mode. Check-in results appear there.'
+        ? 'Luma owns the camera. Confirm Reachy Mini Camera and Express Mode there. You can enable GPT-Live host voice below; check-in results appear in Luma.'
         : 'A Luma handoff is reserved or was recovered after restart. Prepare and open Luma again, or close its scanner and return the camera.'
       : 'Opening Luma pauses Reachy’s voice and camera features. Hold each guest’s QR code in front of Reachy; Luma records valid single-ticket arrivals automatically in Express Mode.';
     if (document.activeElement !== element('luma-event-id')) element('luma-event-id').value = data.event?.id || '';
@@ -119,6 +129,22 @@
     try { await request('express/finish', {scanner_closed: true}); }
     catch (error) { element('event-express-error').textContent = error.message; }
   });
+  element('event-host-greeting').addEventListener('input', () => { greetingEdited = true; });
+  async function hostAction(name, body) {
+    if (hostPending) return;
+    hostPending = true;
+    for (const id of ['event-host-start', 'event-host-stop', 'event-host-welcome']) element(id).disabled = true;
+    element('event-express-error').textContent = '';
+    try { await request(`host/${name}`, body); }
+    catch (error) { element('event-express-error').textContent = error.message; }
+    finally { hostPending = false; await refresh(); }
+  }
+  element('event-host-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    hostAction('start', {greeting: element('event-host-greeting').value.trim()});
+  });
+  element('event-host-stop').addEventListener('click', () => hostAction('stop'));
+  element('event-host-welcome').addEventListener('click', () => hostAction('welcome'));
   // Read-only status polling never records attendance or automatically opens third-party pages.
   async function refresh() {
     if (refreshing) return;

@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     camera_vision_enabled: bool = False
     luma_api_key: SecretStr | None = None
     luma_event_id: str = ""
+    luma_host_greeting: str = Field(
+        default="Welcome to the event! Please show me your QR code ticket!", min_length=1, max_length=300
+    )
     attended_chat_max_seconds: float = Field(default=600, ge=30, le=900)
     openai_api_key: SecretStr | None = None
     openai_realtime_url: str = "wss://api.openai.com/v1/realtime"

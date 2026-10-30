@@ -84,8 +84,17 @@ async function refreshVoice() {
       : "";
     const realtime = diagnostics.voice || diagnostics.realtime;
     const conversation = diagnostics.conversation || {};
-    cameraHandedToLuma = conversation.pause_reason === "luma_express";
+    cameraHandedToLuma = conversation.camera_owner === "luma" || conversation.pause_reason === "luma_express";
     document.querySelector("#start-voice-test").disabled = cameraHandedToLuma;
+    document.querySelector("#motion-mode-notice").textContent = cameraHandedToLuma
+      ? "GPT-Live host supports gentle look movements and Stop while Luma scans. It cannot detect faces."
+      : "Start chat, then ask Roo to look around, dance, nod or wiggle his antennas.";
+    document.querySelectorAll('[data-robot-motion]').forEach(button => {
+      button.disabled = cameraHandedToLuma && !['look', 'stop'].includes(button.dataset.robotMotion);
+    });
+    document.querySelectorAll('#motion-library-form button, #motion-pose-form button').forEach(button => {
+      button.disabled = cameraHandedToLuma;
+    });
     const autoStart = !dashboardStartAttempted && conversation.dashboard_auto_start;
     dashboardStartAttempted = true;
     const vision = realtime?.vision;
@@ -107,8 +116,10 @@ async function refreshVoice() {
       ? `Backend: ${realtime.backend_model} · Input frames: ${Number(realtime.input_frames_sent || 0).toLocaleString()} · Output frames: ${Number(realtime.output_frames_received || 0).toLocaleString()} · Speaking overlap: ${Number(realtime.simultaneous_input_output_frames || 0).toLocaleString()} frames`
       : "";
     if (cameraHandedToLuma) {
-      status.textContent = "Voice paused for Luma Express. Close Luma's scanner, then return the camera above.";
-      document.querySelector("#voice-mode-notice").textContent = "Local wakes and automatic chat are paused while Luma owns the camera.";
+      status.textContent = conversation.mode === "event_host" && realtime?.running
+        ? `GPT-Live · ${realtime.model} connected · Full duplex · Event host · ${Math.ceil(conversation.remaining_seconds / 60)} min left`
+        : "Voice paused. Start GPT-Live host above to talk while Luma scans.";
+      document.querySelector("#voice-mode-notice").textContent = "Luma owns the camera. Host voice supports greetings and look-around movements. Local wakes and automatic chat stay paused.";
       document.querySelector("#model-vision-status").textContent = "Model vision paused for Luma Express.";
       document.querySelector("#model-vision-observation").textContent = "";
     } else if (!realtime) {

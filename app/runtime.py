@@ -262,7 +262,9 @@ class AppContext:
         self.luma_express = LumaExpressHandoff(
             settings.data_dir / "luma-browser-handoff.json" if settings.app_env != RuntimeMode.TEST else None
         )
+        self.luma_express.host_greeting = settings.luma_host_greeting
         self._event_mode_lock = asyncio.Lock()
+        self._host_fault_task: asyncio.Task | None = None
         if self.luma_express.active:
             self.camera.set_external_owner(True)
         self.event_checkin = EventCheckin(
@@ -466,6 +468,8 @@ class AppContext:
             on_activity=self.conversation.gated_activity,
             on_track_changed=self.conversation.update_engaged_track,
             attended_chat_supplier=lambda: self.conversation.attended_chat_active,
+            recovery_allowed=lambda: not self.luma_express.active,
+            on_recovery_blocked=self._host_audio_fault,
             on_fault=self._hardware_fault,
             on_barge_in=self.realtime.cancel_response
             if self.realtime and settings.local_barge_in_enabled and settings.voice_api == "realtime"
@@ -606,7 +610,13 @@ class AppContext:
 
     async def stop(self) -> None:
         self._stopping = True
-        tasks = (self._routing_task, self._idle_task, self._safe_hold_task, self._health_task)
+        tasks = (
+            self._routing_task,
+            self._idle_task,
+            self._safe_hold_task,
+            self._health_task,
+            self._host_fault_task,
+        )
         for task in tasks:
             if task and task is not asyncio.current_task():
                 task.cancel()
@@ -765,7 +775,7 @@ class AppContext:
         return result
 
     async def speak(self, text: str) -> None:
-        if self.luma_express.active:
+        if self.luma_express.active and not self.luma_express.host_voice:
             raise RuntimeError("Voice is paused for Luma Express")
         if self.realtime is None or not self.realtime.running:
             raise RuntimeError("No active voice session")
@@ -810,6 +820,7 @@ class AppContext:
                 raise ValueError("Luma Express requires the direct USB camera backend")
             if not callable(getattr(self.camera, "set_external_owner", None)):
                 raise ValueError("This camera does not support a browser handoff")
+            await self._stop_luma_host()
             self.luma_express.begin(event["id"])
             self.conversation.suspended = True
             try:
@@ -854,6 +865,7 @@ class AppContext:
         async with self._event_mode_lock:
             if not self.luma_express.active:
                 return self.event_checkin.snapshot()
+            await self._stop_luma_host()
             try:
                 await self._start_local_listening()
                 await asyncio.to_thread(self.camera.set_external_owner, False)
@@ -872,6 +884,74 @@ class AppContext:
             self.telemetry.publish("event_scanner_mode", {"mode": "reachy"})
         return self.event_checkin.snapshot()
 
+    async def start_luma_host(self, greeting: str) -> dict:
+        greeting = " ".join(greeting.split())
+        if not greeting or len(greeting) > 300 or any(ord(c) < 32 for c in greeting):
+            raise ValueError("Enter a welcome of 1 to 300 characters")
+        async with self._event_mode_lock:
+            if not self.luma_express.active or not self.luma_express.ready:
+                raise ValueError("Prepare the Luma camera handoff before starting the host")
+            if self.state_machine.state == AppState.SAFE_HOLD or getattr(self, "_stopping", False):
+                raise ValueError("Resolve the hardware fault before starting the host")
+            if not isinstance(self.realtime, OpenAIGptLiveSession) or not self.settings.attended_chat_enabled:
+                raise ValueError("Event hosting requires GPT-Live and attended chat")
+            if self.luma_express.host_voice and self.realtime.running:
+                return self.event_checkin.snapshot()
+            await self._stop_luma_host()
+            self.luma_express.host_greeting = greeting
+            self.luma_express.host_error = None
+            self.luma_express.host_voice = True
+            self.conversation.event_host = True
+            self.conversation.host_connected = False
+            self.conversation.suspended = False
+            self.realtime.host_greeting = greeting
+            try:
+                # Voice needs audio only. DoA tracking and every camera consumer stay off.
+                await self.audio_router.start()
+                await self.conversation.handle_wake(attended=True)
+                if (
+                    not self.realtime.running
+                    or not self.audio_router._running
+                    or self.state_machine.state != AppState.ENGAGED
+                    or getattr(self, "_stopping", False)
+                ):
+                    raise RuntimeError("Host did not connect")
+                self.conversation.host_connected = True
+            except (Exception, asyncio.CancelledError) as exc:
+                self.luma_express.host_error = (
+                    "Could not start GPT-Live. Check audio and the OpenAI connection, then retry."
+                )
+                await self._stop_luma_host()
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
+                raise ValueError(self.luma_express.host_error) from None
+        return self.event_checkin.snapshot()
+
+    async def _stop_luma_host(self) -> None:
+        if not self.luma_express.host_voice:
+            return
+        self.conversation.suspended = True
+        await self.conversation.stop()
+        await self._end_engagement()
+
+    async def stop_luma_host(self) -> dict:
+        async with self._event_mode_lock:
+            await self._stop_luma_host()
+        return self.event_checkin.snapshot()
+
+    async def welcome_luma_guest(self) -> dict:
+        if not self.luma_express.host_voice or not self.realtime or not self.realtime.running:
+            raise ValueError("Start the GPT-Live host first")
+        await self.robot.speak(self.luma_express.host_greeting)
+        return self.event_checkin.snapshot()
+
+    def _host_audio_fault(self) -> None:
+        if self._host_fault_task is None or self._host_fault_task.done():
+            self.luma_express.host_error = (
+                "Host audio stopped. Luma keeps the camera; check Reachy's USB audio and restart the host."
+            )
+            self._host_fault_task = asyncio.create_task(self.stop_luma_host(), name="luma-host-audio-stop")
+
     async def start_voice_test(self) -> dict[str, Any]:
         """Open the selected wake-scoped voice path from the loopback diagnostics UI."""
 
@@ -883,11 +963,14 @@ class AppContext:
         return self.realtime.diagnostics()
 
     async def stop_voice_test(self) -> dict[str, str]:
+        if self.luma_express.host_voice:
+            await self.stop_luma_host()
+            return {"status": "stopped"}
         await self.conversation.handle_command(CommandIntent.CANCEL)
         return {"status": "stopped"}
 
     async def send_voice_request(self, text: str) -> dict[str, str]:
-        if self.luma_express.active:
+        if self.luma_express.active and not self.luma_express.host_voice:
             raise RuntimeError("Voice is paused for Luma Express")
         if self.realtime is None or not self.realtime.running or self.realtime._input_suspended:
             raise RuntimeError("Start a voice test and finish any local consent step first")
@@ -976,9 +1059,25 @@ class AppContext:
         from app.services.reachy.motion.commands import RobotMotionRequest
 
         request = RobotMotionRequest.model_validate(arguments)
-        if self.luma_express.active and request.action not in {"capabilities", "stop"}:
-            return {"status": "blocked", "reason": "camera_handed_to_luma"}
+        if self.luma_express.active:
+            allowed = {"capabilities", "stop"}
+            if self.luma_express.host_voice:
+                allowed.add("look")
+            if request.action not in allowed:
+                return {"status": "blocked", "reason": "camera_handed_to_luma"}
+            if request.action == "look":
+                request = request.model_copy(
+                    update={"duration_seconds": min(request.duration_seconds, 8), "repeat": 1}
+                )
         if request.action == "capabilities":
+            if self.luma_express.active:
+                return {
+                    "status": "available",
+                    "actions": ["look", "stop"] if self.luma_express.host_voice else ["stop"],
+                    "directions": ["left", "right", "up", "down", "forward", "around"],
+                    "max_duration_seconds": 8,
+                    "vision_available": False,
+                }
             return {"status": "available", **self.robot_motion_capabilities()}
         perform = getattr(self.robot, "perform_motion", None)
         if perform is None:
@@ -1196,11 +1295,13 @@ class AppContext:
         self.system_health.set_status(
             "audio",
             HealthStatus.DEGRADED
-            if self.luma_express.active
+            if self.luma_express.active and not self.luma_express.host_voice
             else HealthStatus.HEALTHY
             if audio_ok
             else HealthStatus.ERROR,
-            {"paused_for": "luma_express"} if self.luma_express.active else {},
+            {"paused_for": "luma_express"}
+            if self.luma_express.active and not self.luma_express.host_voice
+            else {},
         )
         self.system_health.set_status(
             "local_wake", HealthStatus.HEALTHY if self._local_models_ready else HealthStatus.DEGRADED
@@ -1301,7 +1402,7 @@ class AppContext:
                 self._idle_task.cancel()
 
     async def _prepare_engagement(self) -> None:
-        if self.luma_express.active:
+        if self.luma_express.active and not self.luma_express.host_voice:
             raise RuntimeError("Camera handed to Luma")
         await self._cancel_idle_for_wake()
         self._track_ref = str(uuid4())
@@ -1309,6 +1410,8 @@ class AppContext:
         if wake:
             await wake(self.doa.wake_bearing() if self.doa else 0.0)
         await self.state_machine.transition(AppState.ENGAGED)
+        if self.luma_express.active:
+            return  # Host voice/motion never reads the browser-owned camera.
         if self.reachy_media:
             frame = await asyncio.to_thread(self.camera.get_frame)
             self.system_health.set_status(
@@ -1341,6 +1444,13 @@ class AppContext:
             )
 
     async def _end_engagement(self) -> None:
+        if self.luma_express.host_voice:
+            self.conversation.suspended = True
+            await self.audio_router.stop()
+            self.luma_express.host_voice = False
+            self.conversation.event_host = False
+            self.conversation.host_connected = False
+            self.realtime.host_greeting = None
         motion = getattr(self.robot, "motion", None)
         if motion:
             motion.stop_expression()
@@ -1392,6 +1502,8 @@ class AppContext:
         await self.event_checkin.stop_scanning()
         self.attention.set_enabled(False)
         try:
+            if self.luma_express.host_voice:
+                await self._stop_luma_host()
             await asyncio.wait_for(self.conversation.stop(), timeout=3)
         except Exception:
             logger.error("Conversation shutdown during hardware fault failed")
