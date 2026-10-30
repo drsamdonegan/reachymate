@@ -47,7 +47,18 @@
             <button id="event-host-stop" disabled>Stop host voice</button>
           </div>
           <p id="event-host-status" class="output" aria-live="polite"></p>
-          <p class="muted">Streams Reachy’s microphone to OpenAI until Stop or the chat time limit shown below. You can interrupt, ask it to welcome guests, look around or dance. Reachy moves while talking; let him settle before showing a QR ticket. He cannot find faces or see ticket results while Luma scans. Use Stop host voice when finished; closing the dashboard does not stop voice. Restart the host to use an edited welcome.</p>
+          <p class="muted">Streams Reachy’s microphone to OpenAI until Stop or the chat time limit shown below. You can interrupt, ask it to welcome guests, look around or dance. Reachy moves while talking; let him settle before showing a QR ticket. Use Stop host voice when finished; closing the dashboard does not stop voice. Restart the host to use an edited welcome.</p>
+          <div id="host-camera-controls">
+            <h3>Let Reachy see</h3>
+            <p class="muted">Open this dashboard in the same Chrome profile as Luma. Share Reachy’s camera, then ask “What can you see?” or “Look around for a person.” Visual questions send a fresh still to OpenAI; no images are saved locally. Luma handles ticket results independently.</p>
+            <div class="inline wrap">
+              <button id="host-camera-start" type="button" disabled>Enable camera sharing</button>
+              <button id="host-camera-stop" type="button" disabled>Stop camera sharing</button>
+            </div>
+            <p id="host-camera-status" class="output" aria-live="polite">Start the GPT-Live host, then enable camera sharing.</p>
+            <video id="host-camera-preview" autoplay muted playsinline hidden style="width:100%;max-width:640px;border-radius:12px" aria-label="Shared Reachy camera preview"></video>
+            <p class="muted">Keep this tab open. Closing or reloading it stops sharing; Luma keeps its own stream. Only Reachy Mini Camera is accepted.</p>
+          </div>
         </div>
         <button id="event-express-finish" hidden>Luma scanner is closed — return camera to Reachy</button>
         <p id="event-express-error" role="status"></p>
@@ -228,7 +239,8 @@
       </section>
     </div>
 
-    <script src="/static/event-checkin.js?v=20261030-moves2"></script>
-    <script src="/static/main.js?v=20261030-moves2"></script>
+    <script src="/static/event-checkin.js?v=20261030-vision1"></script>
+    <script src="/static/host-camera.js?v=20261030-vision1"></script>
+    <script src="/static/main.js?v=20261030-vision1"></script>
   </body>
 </html>

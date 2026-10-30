@@ -44,7 +44,7 @@ LIVE_AUDIO_RATE = 16_000
 
 def build_session_start(settings: Settings, *, host_greeting: str | None = None) -> dict:
     host = host_greeting is not None
-    schemas = tool_schemas(include_vision=settings.camera_vision_enabled and not host)
+    schemas = tool_schemas(include_vision=settings.camera_vision_enabled)
     if host:
         schemas = [tool for tool in schemas if tool["name"] in EVENT_HOST_TOOLS]
     return {
@@ -52,6 +52,11 @@ def build_session_start(settings: Settings, *, host_greeting: str | None = None)
         "session": {
             "model": settings.openai_live_model,
             "instructions": EVENT_HOST_INSTRUCTIONS
+            + (
+                "\n\n" + VISION_INSTRUCTIONS
+                if settings.camera_vision_enabled
+                else "\nCamera vision is disabled."
+            )
             if host
             else LIVE_INSTRUCTIONS + ("\n\n" + VISION_INSTRUCTIONS if settings.camera_vision_enabled else ""),
             "input": [
@@ -596,7 +601,9 @@ class OpenAIGptLiveSession(OpenAIRealtimeSession):
             return {"status": "rate_limited"}, None
         self._last_vision_request_at = time.monotonic()
         try:
-            view = await asyncio.wait_for(self.vision_snapshot_provider(), 5)
+            view = await asyncio.wait_for(
+                self.vision_snapshot_provider(), 8.5 if self.host_greeting is not None else 5
+            )
             if not isinstance(view, ModelCameraView) or not view.jpeg or len(view.jpeg) > 512 * 1024:
                 raise ValueError("camera_unavailable")
         except Exception:
@@ -759,9 +766,8 @@ class OpenAIGptLiveSession(OpenAIRealtimeSession):
             "finalization_confirmed": self._finalization_confirmed,
             "backend_pending": len(self._backend_pending),
             "vision": {
-                "enabled": self.host_greeting is None
-                and self.settings.camera_vision_enabled
-                and self.vision_snapshot_provider is not None,
+                "enabled": self.settings.camera_vision_enabled and self.vision_snapshot_provider is not None,
+                "available": bool(self.vision_allowed and self.vision_allowed()),
                 "mode": "on_request",
                 "images_sent": self._vision_images_sent,
                 "last_image_age_seconds": round(time.monotonic() - self._last_vision_sent_at, 1)

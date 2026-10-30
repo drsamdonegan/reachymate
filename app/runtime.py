@@ -50,6 +50,7 @@ from app.services.system.key_provider import BackendKeyProvider
 from app.services.system.telemetry import TelemetryBroker
 from app.services.vision.attention import AttentionService, CameraCalibration
 from app.services.vision.av_gate import AVGate, MouthActivity
+from app.services.vision.browser_camera import BrowserCameraBridge
 from app.services.vision.camera import ReachyCameraAdapter, SimulationCameraAdapter
 from app.services.vision.enrollment import EnrollmentService
 from app.services.vision.face_detect import YuNetFaceDetector
@@ -263,6 +264,7 @@ class AppContext:
             settings.data_dir / "luma-browser-handoff.json" if settings.app_env != RuntimeMode.TEST else None
         )
         self.luma_express.host_greeting = settings.luma_host_greeting
+        self.browser_camera = BrowserCameraBridge()
         self._event_mode_lock = asyncio.Lock()
         self._host_fault_task: asyncio.Task | None = None
         if self.luma_express.active:
@@ -610,6 +612,7 @@ class AppContext:
 
     async def stop(self) -> None:
         self._stopping = True
+        self.browser_camera.stop()
         tasks = (
             self._routing_task,
             self._idle_task,
@@ -928,6 +931,7 @@ class AppContext:
         return self.event_checkin.snapshot()
 
     async def _stop_luma_host(self) -> None:
+        self.browser_camera.stop()
         if not self.luma_express.host_voice:
             return
         self.conversation.suspended = True
@@ -1003,6 +1007,7 @@ class AppContext:
             "degraded_reason": self.attention.degraded_reason,
             "face_present": observation is not None and observation.in_zone,
         }
+        diagnostics["browser_camera"] = self.browser_camera.diagnostics()
         power = getattr(self.robot, "power", None)
         if power:
             diagnostics["power"] = {
@@ -1021,24 +1026,26 @@ class AppContext:
         return capabilities() if capabilities else {"ready": False, "axes": [], "dances": [], "emotions": []}
 
     def _model_vision_allowed(self) -> bool:
-        return bool(
+        engaged = bool(
             self.settings.camera_vision_enabled
-            and not self.luma_express.active
             and self.conversation.attended_chat_active
             and self.state_machine.state == AppState.ENGAGED
-            and self.attention.enabled
             and not self.event_checkin.scanning
             and self.guard.is_engaged()
             and self.realtime is not None
             and self.realtime.running
             and not self.realtime._input_suspended
-            and isinstance(self.camera, ReachyCameraAdapter)
         )
+        if self.luma_express.active:
+            return engaged and self.luma_express.host_voice and self.browser_camera.active
+        return engaged and self.attention.enabled and isinstance(self.camera, ReachyCameraAdapter)
 
     async def _inspect_camera(self, arguments: dict, _call_id: str) -> dict:
         if self.event_checkin.scanning:
             return {"status": "unavailable", "reason": "finish_event_qr_scanning_first"}
         if not self._model_vision_allowed():
+            if self.luma_express.active:
+                return {"status": "unavailable", "reason": "enable_camera_sharing_in_dashboard"}
             return {"status": "unavailable", "reason": "start_attended_chat_or_finish_local_check"}
         return {"status": "ready", "question": arguments["question"]}
 
@@ -1052,7 +1059,10 @@ class AppContext:
                     if not self._model_vision_allowed():
                         return None
                     await asyncio.sleep(0.05)
-        view = await asyncio.to_thread(capture_model_view, self.camera)
+        if self.luma_express.active:
+            view = await self.browser_camera.capture()
+        else:
+            view = await asyncio.to_thread(capture_model_view, self.camera)
         return view if self._model_vision_allowed() else None
 
     async def _robot_motion(self, arguments: dict, _call_id: str = "dashboard") -> dict:
@@ -1438,6 +1448,7 @@ class AppContext:
             )
 
     async def _end_engagement(self) -> None:
+        self.browser_camera.stop()
         if self.luma_express.host_voice:
             self.conversation.suspended = True
             await self.audio_router.stop()

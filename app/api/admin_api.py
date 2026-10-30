@@ -38,6 +38,10 @@ class HostWelcome(BaseModel):
     greeting: str = Field(min_length=1, max_length=300)
 
 
+class HostCamera(BaseModel):
+    camera_label: str = Field(min_length=1, max_length=120)
+
+
 def require_dashboard_origin(request: Request) -> None:
     origin = request.headers.get("origin")
     if origin is not None and origin != str(request.base_url).rstrip("/"):
@@ -90,6 +94,63 @@ async def luma_host_welcome(request: Request):
         return private_result(await get_ctx(request).welcome_luma_guest())
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from None
+
+
+@router.post("/event-checkin/host/camera/start")
+async def host_camera_start(request: Request, payload: HostCamera):
+    require_dashboard_origin(request)
+    ctx = get_ctx(request)
+    if not (ctx.settings.camera_vision_enabled and ctx.luma_express.host_voice and ctx.realtime.running):
+        raise HTTPException(409, "Start the GPT-Live host with camera vision enabled first")
+    try:
+        return private_result({"token": ctx.browser_camera.start(payload.camera_label)})
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+
+
+def browser_camera_auth(request: Request):
+    require_dashboard_origin(request)
+    ctx = get_ctx(request)
+    token = request.headers.get("authorization", "").removeprefix("Bearer ")
+    if not ctx.browser_camera.authorize(token):
+        raise HTTPException(403, "Camera sharing ended; enable it again")
+    return ctx, token
+
+
+@router.get("/event-checkin/host/camera/request")
+async def host_camera_request(request: Request):
+    ctx, token = browser_camera_auth(request)
+    if not ctx._model_vision_allowed():
+        raise HTTPException(409, "Camera sharing is paused")
+    return private_result(ctx.browser_camera.poll(token))
+
+
+@router.post("/event-checkin/host/camera/frame/{request_id}")
+async def host_camera_frame(request: Request, request_id: str):
+    from app.services.vision.browser_camera import MAX_JPEG_BYTES
+
+    ctx, token = browser_camera_auth(request)
+    if not ctx._model_vision_allowed():
+        raise HTTPException(409, "Camera sharing is paused")
+    if request.headers.get("content-type") != "image/jpeg":
+        raise HTTPException(415, "Expected a camera JPEG")
+    content = bytearray()
+    async for chunk in request.stream():
+        content.extend(chunk)
+        if len(content) > MAX_JPEG_BYTES:
+            raise HTTPException(413, "Camera image too large")
+    try:
+        await ctx.browser_camera.submit(token, request_id, bytes(content))
+    except (ValueError, OSError):
+        raise HTTPException(409, "Camera frame invalid, expired or cancelled") from None
+    return private_result({"status": "received"})
+
+
+@router.post("/event-checkin/host/camera/stop")
+async def host_camera_stop(request: Request):
+    ctx, _ = browser_camera_auth(request)
+    ctx.browser_camera.stop()
+    return private_result({"status": "stopped"})
 
 
 async def event_action(request, action, *args):

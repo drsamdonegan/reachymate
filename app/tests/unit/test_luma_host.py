@@ -28,13 +28,18 @@ def host_context(settings):
     return ctx, wire
 
 
-def test_host_session_has_no_vision_access_or_routing_tools(settings):
+def test_host_session_has_opt_in_vision_but_no_access_or_routing_tools(settings):
     settings.camera_vision_enabled = True
     config = build_session_start(settings, host_greeting="Welcome to our demo!")["session"]
-    assert "cannot see" in config["instructions"]
+    assert "inspect_camera" in config["instructions"]
     assert "Welcome to our demo!" in config["input"][0]["content"][0]["text"]
     tools = config["delegation"]["responses"]["tools"]
-    assert {t["name"] for t in tools} == {"robot_motion", "wait_for_user", "end_conversation"}
+    assert {t["name"] for t in tools} == {
+        "robot_motion",
+        "inspect_camera",
+        "wait_for_user",
+        "end_conversation",
+    }
     motion = next(t for t in tools if t["name"] == "robot_motion")["parameters"]["properties"]
     assert {"look", "pose", "gesture", "dance", "emotion", "recording", "list", "stop"} <= set(
         motion["action"]["enum"]
@@ -49,6 +54,9 @@ def test_host_session_has_no_vision_access_or_routing_tools(settings):
             "enum"
         ]
     )
+    settings.camera_vision_enabled = False
+    disabled = build_session_start(settings, host_greeting="Welcome")["session"]
+    assert "inspect_camera" not in {t["name"] for t in disabled["delegation"]["responses"]["tools"]}
 
 
 @pytest.mark.asyncio

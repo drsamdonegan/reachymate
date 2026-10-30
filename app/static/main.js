@@ -87,7 +87,7 @@ async function refreshVoice() {
     cameraHandedToLuma = conversation.camera_owner === "luma" || conversation.pause_reason === "luma_express";
     document.querySelector("#start-voice-test").disabled = cameraHandedToLuma;
     document.querySelector("#motion-mode-notice").textContent = cameraHandedToLuma
-      ? "GPT-Live host can look around, dance and play Hugging Face moves. Let Reachy settle before scanning a ticket; face detection stays off."
+      ? "GPT-Live host can look around, dance and play Hugging Face moves. Enable camera sharing above for visual questions; let Reachy settle before scanning a ticket."
       : "Start chat, then ask Roo to look around, dance, nod or wiggle his antennas.";
     document.querySelectorAll('[data-robot-motion]').forEach(button => {
       button.disabled = cameraHandedToLuma && conversation.mode !== 'event_host' && button.dataset.robotMotion !== 'stop';
@@ -98,6 +98,7 @@ async function refreshVoice() {
     const autoStart = !dashboardStartAttempted && conversation.dashboard_auto_start;
     dashboardStartAttempted = true;
     const vision = realtime?.vision;
+    window.ReachyHostCamera?.update(diagnostics);
     document.querySelector("#model-vision-status").textContent = vision?.enabled
       ? `Model vision: Reachy camera snapshots on request · ${vision.images_sent} sent${vision.last_image_age_seconds == null ? "" : ` · Last capture ${Math.round(vision.last_image_age_seconds)}s ago`}${vision.last_error ? ` · ${vision.last_error}` : ""}`
       : "Model vision: unavailable in this profile.";
@@ -120,8 +121,10 @@ async function refreshVoice() {
         ? `GPT-Live · ${realtime.model} connected · Full duplex · Event host · ${Math.ceil(conversation.remaining_seconds / 60)} min left`
         : "Voice paused. Start GPT-Live host above to talk while Luma scans.";
       document.querySelector("#voice-mode-notice").textContent = "Luma owns the camera. Host voice supports greetings, talking motion, looks and dances. Local wakes and automatic chat stay paused.";
-      document.querySelector("#model-vision-status").textContent = "Model vision paused for Luma Express.";
-      document.querySelector("#model-vision-observation").textContent = "";
+      if (!diagnostics.browser_camera?.connected) {
+        document.querySelector("#model-vision-status").textContent = "Enable camera sharing above so GPT-Live can see while Luma scans.";
+        document.querySelector("#model-vision-observation").textContent = "";
+      }
     } else if (!realtime) {
       status.textContent = "OpenAI voice is disabled.";
     } else if (realtime.last_error) {

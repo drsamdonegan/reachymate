@@ -65,9 +65,12 @@ The existing dashboard also includes [Luma event check-in](docs/event-checkin.md
 check-in** pauses Reachy's voice/camera features and opens Luma's official Express scanner using his USB
 camera. Select **Reachy Mini Camera** in Chrome's camera settings and confirm **Express Mode On** after opening or reloading the scanner; valid single-ticket
 guests then check in without per-person clicks or an API key. Group tickets still need selection. Close
-all Luma scanner tabs and return the camera from the dashboard before resuming camera-enabled chat.
+all Luma scanner tabs and return the camera before resuming native camera ownership.
 **Start GPT-Live host** enables interruptible greetings, talking motion, looks and dances while Luma scans;
-it cannot see faces or ticket results. The camera handoff survives restarts. The original assisted local scanner and optional API verification remain available. Use
+**Enable camera sharing** lets the host answer visual questions through Chrome's Reachy camera stream.
+Use the same Chrome profile for both tabs and keep the dashboard open. Images are sent only on request;
+the model cannot identify people or verify ticket results. The camera handoff survives restarts, while
+camera sharing requires a fresh opt-in. The original assisted local scanner and optional API verification remain available. Use
 **Configure Luma.command** for masked local key entry if verification is wanted.
 
 To install the current public Hugging Face community movement sets, run

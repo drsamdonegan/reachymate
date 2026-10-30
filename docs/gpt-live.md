@@ -45,6 +45,25 @@ Snapshots go to OpenAI only on visual requests; there is no continuous video upl
 
 The dashboard separately shows the number and age of model snapshots and the backend's latest camera observation. This one bounded observation is kept in memory only and cleared on stop; telemetry records counts and dimensions, not pixels, questions or observation text. The local preview alone does not indicate model vision is connected.
 
+During Luma event hosting, the native camera remains closed. Open the dashboard in the same Chrome
+profile as Luma, start the host, then click **Enable camera sharing**. Chrome opens a verified Reachy
+camera track in the dashboard alongside its scanner tab. For each `inspect_camera` request, the app
+issues a short-lived request ID; the dashboard supplies one fresh bounded JPEG to the local app,
+which passes it through the same Responses image path. No periodic images are uploaded. The microphone
+continues streaming during this work. Camera permission or sharing failures leave voice and Luma alone.
+
+Sharing uses a per-tab in-memory token, same-origin checks and a 15-second lease. Wrong devices,
+unsolicited/oversized frames, expired request IDs and late uploads after Stop are rejected. Frames are
+decoded and re-encoded without metadata off the audio loop. Closing/reloading the dashboard, camera
+disconnect, stopping the host, app restart or **Stop camera sharing** ends sharing. Chrome may briefly
+open its selected camera to obtain permission when device labels are hidden; a non-Reachy track is
+immediately closed before preview or upload. Choose Reachy in Chrome's camera settings if that happens.
+
+Ask **What can you see?** and check that the model image count increases and a fresh observation appears.
+Then hold up a different object and ask again. Check Luma's preview and Express Mode remain active.
+**Look around for a person** combines bounded movement with a still after it settles; this is not
+continuous face tracking, identity matching or access control. Ticket results remain authoritative in Luma.
+
 On shutdown the client immediately clears local playback, discards further model audio, sends `session.close`, waits up to five seconds for `session.closed` and final cumulative usage, then releases playback and the socket. Attended mode pauses only the ordinary idle watchdog; its ten-minute deadline and the transport's maximum session age still apply. A connection failure closes the engagement through the existing local fallback and bounded circuit breaker. Start chat can retry a failed cloud session immediately.
 
 ## Dashboard and verification

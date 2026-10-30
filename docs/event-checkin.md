@@ -55,9 +55,19 @@ joint, speed and duration limits as ordinary chat. It searches the catalogue for
 guessing identifiers. Reachy's head also moves with his spoken audio, including after a requested move
 finishes. Stop movement holds still until the next movement or chat start.
 
-“Look for a face” can trigger looking around, but there is no face detection, identity matching, model
-image upload or door action in this mode. Luma's preview moves with the head; use motion between tickets
-and let Reachy settle before scanning. The camera remains owned by Luma throughout.
+For visual questions, open this dashboard in the same Chrome profile as Luma and click **Enable camera
+sharing** after starting the host. Allow camera access and verify the preview shows Reachy's view.
+Chrome shares the camera between the dashboard and scanner; the native app keeps its camera closed.
+Ask "What can you see?" or "What am I holding?" The dashboard supplies one fresh image only when the
+model requests it. The model image count and latest observation confirm that pixels reached the backend.
+No image files are saved locally. If Chrome cannot share the device, the dashboard reports the error;
+voice and Luma remain independent. A MacBook camera is never accepted for preview or upload.
+
+"Look for a person" can combine looking around and an image after movement settles. This does not
+identify anyone, continuously track faces, read ticket credentials, verify attendance or operate a door.
+Luma's preview moves with the head; let Reachy settle before scanning. Keep this dashboard open while
+sharing. Closing/reloading it, disconnecting USB, stopping the host or clicking **Stop camera sharing**
+closes its stream. Luma's separate stream stays open. Re-enable sharing after restarting the host.
 
 The host streams microphone audio to OpenAI even without a face in view, including while speaking.
 **Stop host voice** or **Stop chat** stops both the cloud session and local audio without releasing
@@ -101,6 +111,7 @@ or an organiser-controlled test registration; do not test on an absent real gues
 | Automatic single ticket | Present an organiser-controlled ticket or a consenting attendee who is present. Luma records the check-in without a confirmation click; its Checked In list/count updates. |
 | Reload and restart | Reload the dashboard or reopen the launcher: the current host mode is preserved. Restart the app: host voice stays off and local camera capture stays blocked. |
 | Host voice | Start GPT-Live host, hear the welcome, then interrupt it. Input/output overlap increases in voice diagnostics and Luma still shows Express Mode with a live preview. |
+| Shared model vision | Enable camera sharing in the same Chrome profile. Ask about two different objects; each request produces a new image count and matching observation while Luma keeps scanning. Stop sharing and verify further visual requests report it unavailable. |
 | Motion | Ask for a look-around, dance and named community move. Motion runs, and speech animation resumes afterwards; no camera image is sent to the model. Stop movement holds still. |
 | Stop and faults | Stop host voice, expire its time limit, or disconnect cloud voice. Microphone capture ends, the handoff remains, and no automatic voice/USB restart occurs. |
 | Return to chat | Close all Luma scanner tabs and return the camera. Start chat explicitly; confirm normal camera and voice work again. |
@@ -141,4 +152,6 @@ retain its URL, so use an operator-controlled browser and close ticket tabs afte
 model image uploads are blocked, including images waiting for the socket. Normal attended image requests
 resume after scanning stops.
 
-In Express Mode, Luma's browser page owns camera access and handles tickets under its own policies. Reachy's app does not receive or archive those frames or guest records.
+In Express Mode, Luma's browser page handles tickets under its own policies. The optional dashboard
+camera-sharing stream supplies requested stills to OpenAI through the local app, without recording or
+archiving them. It does not read Luma's page, guest records or check-in results.

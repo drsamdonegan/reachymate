@@ -2,7 +2,8 @@
 
 Reachy uses one motion controller for head position/rotation, body yaw, both antennas, looks, gestures,
 dances and recorded expressions. GPT-Live can request every supported action in ordinary chat and the
-Luma event-host mode. Luma keeps the camera during event hosting, so moving is possible without vision.
+Luma event-host mode. Moving works without vision; **Enable camera sharing** adds requested camera
+stills through Chrome while Luma scans, without reopening the native camera.
 Let the head settle before showing a ticket to the camera.
 
 ## Install or refresh the Hugging Face catalogue
@@ -52,5 +53,6 @@ validation is reported unavailable and never sent to the motors. Long recordings
 Ask Reachy to greet you and watch his head move with speech. Request a look-around, a short dance and a
 named community recording, then ask him to speak again. Verify Stop holds him still and a new look request
 restores movement. In event mode, Luma should remain in Express Mode with a live camera preview throughout;
-model image count stays at zero. Automated tests cover held-pose speech, Stop/freeze priority, host tool
+model image count stays at zero unless camera sharing is enabled and a visual question is asked.
+Automated tests cover held-pose speech, Stop/freeze priority, host tool
 access, catalogue pagination, checksums, and bounds without running physical movements.
