@@ -1059,26 +1059,20 @@ class AppContext:
         from app.services.reachy.motion.commands import RobotMotionRequest
 
         request = RobotMotionRequest.model_validate(arguments)
-        if self.luma_express.active:
-            allowed = {"capabilities", "stop"}
-            if self.luma_express.host_voice:
-                allowed.add("look")
-            if request.action not in allowed:
+        if self.luma_express.active and not self.luma_express.host_voice:
+            if request.action not in {"capabilities", "list", "stop"}:
                 return {"status": "blocked", "reason": "camera_handed_to_luma"}
-            if request.action == "look":
-                request = request.model_copy(
-                    update={"duration_seconds": min(request.duration_seconds, 8), "repeat": 1}
-                )
         if request.action == "capabilities":
-            if self.luma_express.active:
-                return {
-                    "status": "available",
-                    "actions": ["look", "stop"] if self.luma_express.host_voice else ["stop"],
-                    "directions": ["left", "right", "up", "down", "forward", "around"],
-                    "max_duration_seconds": 8,
-                    "vision_available": False,
-                }
-            return {"status": "available", **self.robot_motion_capabilities()}
+            capabilities = self.robot_motion_capabilities()
+            capabilities.pop(
+                "community", None
+            )  # Model searches a bounded page instead of thousands of names.
+            return {"status": "available", **capabilities}
+        if request.action == "list":
+            library = getattr(self.robot, "movement_library", None)
+            return (
+                library.search(request.query, offset=request.offset) if library else {"status": "unavailable"}
+            )
         perform = getattr(self.robot, "perform_motion", None)
         if perform is None:
             return {"status": "unavailable"}

@@ -235,6 +235,18 @@ async def robot_motions(request: Request) -> dict[str, Any]:
     return get_ctx(request).robot_motion_capabilities()
 
 
+@router.post("/robot/motions/reload")
+async def reload_robot_motions(request: Request):
+    require_dashboard_origin(request)
+    reload = getattr(get_ctx(request).robot, "reload_movements", None)
+    if reload is None:
+        raise HTTPException(409, "Movement library is unavailable in this profile")
+    try:
+        return private_result(await reload())
+    except (ValueError, TypeError, KeyError, OSError):
+        raise HTTPException(409, "Could not load the movement catalogue; check provisioning") from None
+
+
 @router.post("/conversation/stop")
 async def stop_conversation(request: Request) -> dict[str, str]:
     return await get_ctx(request).stop_voice_test()

@@ -12,7 +12,7 @@ from enum import Enum
 
 import numpy as np
 
-from app.services.reachy.motion.expressions import Frame, MotionSequence, safe_frame
+from app.services.reachy.motion.expressions import Frame, MotionSequence, reachable_joints, safe_frame
 
 
 class MotionMode(str, Enum):
@@ -41,6 +41,8 @@ class MotionManager:
         self.mode = MotionMode.PARKED
         self.target = np.eye(4)
         self._offsets = (0.0,) * 6
+        self._offsets_at = 0.0
+        self._idle_motion_enabled = False
         self._lock = threading.Lock()
         self._commands: queue.Queue = queue.Queue(maxsize=32)
         self._stop = threading.Event()
@@ -84,6 +86,7 @@ class MotionManager:
     def set_mode(self, mode: MotionMode) -> None:
         with self._lock:
             self.mode = mode
+            self._idle_motion_enabled = mode == MotionMode.ENGAGED
             if mode in {MotionMode.PARKED, MotionMode.CAPTURE_FREEZE}:
                 self._offsets = (0.0,) * 6
             if mode != MotionMode.ENGAGED:
@@ -104,6 +107,7 @@ class MotionManager:
             if self.mode != MotionMode.ENGAGED or self.in_flight:
                 return None
             self._expression_generation += 1
+            self._idle_motion_enabled = True
             self._expression = None
             self._held_frame = self._frame.copy()
             return self._expression_generation
@@ -122,6 +126,7 @@ class MotionManager:
 
     def stop_expression(self) -> None:
         with self._lock:
+            self._idle_motion_enabled = False  # Stop means stop speech/breathing motion too.
             self._expression_generation += 1
             self._expression = None
             self._held_frame = self._frame.copy() if self.mode == MotionMode.ENGAGED else None
@@ -135,6 +140,13 @@ class MotionManager:
                 "name": self.expression_label,
                 "amplitude_scale": self.expression_amplitude_scale,
                 "active": self._expression is not None,
+                "speech_motion_enabled": self.mode == MotionMode.ENGAGED and self._idle_motion_enabled,
+                "speech_active": self.mode == MotionMode.ENGAGED
+                and self._idle_motion_enabled
+                and self._expression is None
+                and time.monotonic() - self._offsets_at < 0.3
+                and any(abs(x) > 0.0001 for x in self._offsets),
+                "error": self.error,
                 "remaining_seconds": max(
                     0, self._expression.duration - (time.monotonic() - self._expression_started)
                 )
@@ -151,13 +163,17 @@ class MotionManager:
         with self._lock:
             if self.mode == MotionMode.ENGAGED:
                 self._offsets = tuple(offsets)
+                self._offsets_at = time.monotonic()
 
     def reset_speech(self) -> None:
         with self._lock:
             self._offsets = (0.0,) * 6
 
     def _run(self) -> None:
+        from reachy_mini.kinematics.analytical_kinematics import AnalyticalKinematics
         from reachy_mini.utils import create_head_pose
+
+        kinematics = AnalyticalKinematics(automatic_body_yaw=False)
 
         next_frame = time.monotonic()
         while not self._stop.is_set():
@@ -191,21 +207,31 @@ class MotionManager:
                 mode, target, offsets = self.mode, self.target.copy(), self._offsets
                 sequence, started = self._expression, self._expression_started
                 held, previous = self._held_frame, self._frame.copy()
+                idle_motion = mode == MotionMode.ENGAGED and self._idle_motion_enabled
+                if not idle_motion or time.monotonic() - self._offsets_at > 0.3:
+                    offsets = (0.0,) * 6
             if mode not in {MotionMode.PARKED, MotionMode.CAPTURE_FREEZE}:
                 try:
                     x, y, z, roll, pitch, yaw = offsets
                     # Small bounded breathing and speech offsets in metres/radians.
-                    if mode == MotionMode.ENGAGED:
+                    if idle_motion:
                         z += 0.0015 * math.sin(time.monotonic() * math.pi)
                     offset = create_head_pose(x=x, y=y, z=z, roll=roll, pitch=pitch, yaw=yaw, degrees=False)
                     if sequence is not None:
                         elapsed = time.monotonic() - started
                         self.last_motion_at = time.monotonic()
                         requested = sequence.evaluate(elapsed)
-                    elif held is not None:
-                        requested = held
                     else:
-                        requested = Frame(clamp_pose(target @ offset), previous.antennas, 0.0)
+                        base = held or Frame(clamp_pose(target), previous.antennas, 0.0)
+                        requested = Frame(base.head @ offset, base.antennas, base.body)
+                        # Speech follows a held pose too, but never adds an unsafe
+                        # offset to a pose already at the edge of motor travel.
+                        try:
+                            candidate = safe_frame(requested, previous, 0.02)
+                            if not reachable_joints(kinematics.ik(candidate.head, body_yaw=candidate.body)):
+                                requested = base
+                        except ValueError:
+                            requested = base
                     frame = safe_frame(requested, previous, 0.02)
                     self.mini.set_target(head=frame.head, antennas=frame.antennas, body_yaw=frame.body)
                     with self._lock:

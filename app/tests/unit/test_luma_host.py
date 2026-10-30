@@ -36,8 +36,10 @@ def test_host_session_has_no_vision_access_or_routing_tools(settings):
     tools = config["delegation"]["responses"]["tools"]
     assert {t["name"] for t in tools} == {"robot_motion", "wait_for_user", "end_conversation"}
     motion = next(t for t in tools if t["name"] == "robot_motion")["parameters"]["properties"]
-    assert motion["action"]["enum"] == ["capabilities", "look", "stop"]
-    assert motion["duration_seconds"]["maximum"] == 8
+    assert {"look", "pose", "gesture", "dance", "emotion", "recording", "list", "stop"} <= set(
+        motion["action"]["enum"]
+    )
+    assert motion["duration_seconds"]["maximum"] == 20
     # Building this profile must not mutate the normal conversation's tools.
     ordinary = build_session_start(settings)["session"]["delegation"]["responses"]["tools"]
     assert "inspect_camera" in {t["name"] for t in ordinary}
@@ -72,14 +74,15 @@ async def test_host_keeps_luma_camera_and_supports_welcome_text_and_bounded_look
         ctx.robot.speak.assert_awaited_once_with("Welcome to our demo!")
         await ctx.send_voice_request("Look around")
         assert any(e.get("type") == "response.item.create" for e in wire.sent)
-        assert (await ctx._robot_motion({"action": "dance"}))["status"] == "blocked"
+        for action in ("dance", "emotion", "recording", "pose", "gesture"):
+            assert (await ctx._robot_motion({"action": action}))["status"] == "started"
         assert (
             await ctx._robot_motion(
                 {"action": "look", "direction": "around", "duration_seconds": 20.0, "repeat": 3}
             )
         )["status"] == "started"
         request = ctx.robot.perform_motion.await_args.args[0]
-        assert request.duration_seconds == 8 and request.repeat == 1
+        assert request.duration_seconds == 20 and request.repeat == 3
         await ctx.stop_luma_host()
         assert ctx.luma_express.active and ctx.luma_express.ready
         assert ctx.conversation.suspended and not ctx.conversation.event_host
@@ -171,3 +174,9 @@ def test_host_mutations_require_local_origin_and_bounded_greeting():
             == 403
         )
     assert client.post("/api/admin/event-checkin/host/start", json={"greeting": "x" * 301}).status_code == 422
+    assert (
+        client.post(
+            "/api/admin/robot/motions/reload", headers={"Origin": "https://untrusted.example"}
+        ).status_code
+        == 403
+    )

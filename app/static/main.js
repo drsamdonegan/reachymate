@@ -80,20 +80,20 @@ async function refreshVoice() {
     cameraSourceName = diagnostics.reachy_media?.camera_source?.name || "Simulation camera";
     const movement = diagnostics.motion;
     document.querySelector("#motion-status").textContent = movement
-      ? `Motion: ${movement.status}${movement.name ? ` · ${movement.name}` : ""} · ${movement.mode}`
+      ? `Motion: ${movement.speech_active ? "moving with speech" : movement.status}${movement.name ? ` · ${movement.name}` : ""} · ${movement.mode}`
       : "";
     const realtime = diagnostics.voice || diagnostics.realtime;
     const conversation = diagnostics.conversation || {};
     cameraHandedToLuma = conversation.camera_owner === "luma" || conversation.pause_reason === "luma_express";
     document.querySelector("#start-voice-test").disabled = cameraHandedToLuma;
     document.querySelector("#motion-mode-notice").textContent = cameraHandedToLuma
-      ? "GPT-Live host supports gentle look movements and Stop while Luma scans. It cannot detect faces."
+      ? "GPT-Live host can look around, dance and play Hugging Face moves. Let Reachy settle before scanning a ticket; face detection stays off."
       : "Start chat, then ask Roo to look around, dance, nod or wiggle his antennas.";
     document.querySelectorAll('[data-robot-motion]').forEach(button => {
-      button.disabled = cameraHandedToLuma && !['look', 'stop'].includes(button.dataset.robotMotion);
+      button.disabled = cameraHandedToLuma && conversation.mode !== 'event_host' && button.dataset.robotMotion !== 'stop';
     });
     document.querySelectorAll('#motion-library-form button, #motion-pose-form button').forEach(button => {
-      button.disabled = cameraHandedToLuma;
+      button.disabled = cameraHandedToLuma && conversation.mode !== 'event_host';
     });
     const autoStart = !dashboardStartAttempted && conversation.dashboard_auto_start;
     dashboardStartAttempted = true;
@@ -119,7 +119,7 @@ async function refreshVoice() {
       status.textContent = conversation.mode === "event_host" && realtime?.running
         ? `GPT-Live · ${realtime.model} connected · Full duplex · Event host · ${Math.ceil(conversation.remaining_seconds / 60)} min left`
         : "Voice paused. Start GPT-Live host above to talk while Luma scans.";
-      document.querySelector("#voice-mode-notice").textContent = "Luma owns the camera. Host voice supports greetings and look-around movements. Local wakes and automatic chat stay paused.";
+      document.querySelector("#voice-mode-notice").textContent = "Luma owns the camera. Host voice supports greetings, talking motion, looks and dances. Local wakes and automatic chat stay paused.";
       document.querySelector("#model-vision-status").textContent = "Model vision paused for Luma Express.";
       document.querySelector("#model-vision-observation").textContent = "";
     } else if (!realtime) {
@@ -186,15 +186,20 @@ document.querySelector("#robot-request-form").addEventListener("submit", async (
   }
 });
 function refreshMovementOptions() {
-  const kind = document.querySelector("#motion-kind").value === "dance" ? "dances" : "emotions";
+  const kind = {dance: 'dances', emotion: 'emotions', recording: 'community'}[document.querySelector("#motion-kind").value];
+  const query = document.querySelector("#motion-search").value.trim().toLowerCase();
+  const moves = (movementCatalogue[kind] || []).map(value => typeof value === 'string'
+    ? {name: value, title: value.replaceAll('_', ' ')} : value);
+  const matches = moves.filter(move => `${move.title} ${move.name} ${move.repo || ''}`.toLowerCase().includes(query));
   const select = document.querySelector("#motion-name");
-  select.replaceChildren(...movementCatalogue[kind].map((name) => {
+  select.replaceChildren(...matches.slice(0, 200).map((move) => {
     const option = document.createElement("option");
-    option.value = name;
-    option.textContent = name.replaceAll("_", " ");
+    option.value = move.name;
+    option.textContent = `${move.title}${move.repo ? ` — ${move.repo}` : ''}`;
     return option;
   }));
-  if (kind === "dances" && movementCatalogue.dances.includes("groovy_sway_and_roll")) {
+  document.querySelector('#motion-search-status').textContent = `${matches.length} matches${matches.length > 200 ? ' · Showing first 200; narrow your search to find more' : ''}`;
+  if (kind === "dances" && matches.some(move => move.name === "groovy_sway_and_roll")) {
     select.value = "groovy_sway_and_roll";
   }
 }
@@ -218,8 +223,10 @@ document.querySelectorAll("[data-robot-motion]").forEach((button) => {
   }));
 });
 document.querySelector("#motion-kind").addEventListener("change", refreshMovementOptions);
+document.querySelector("#motion-search").addEventListener("input", refreshMovementOptions);
 document.querySelector("#motion-library-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!document.querySelector("#motion-name").value) return;
   await sendRobotMotion({action: document.querySelector("#motion-kind").value,
     name: document.querySelector("#motion-name").value, duration_seconds: 12});
 });
@@ -231,11 +238,19 @@ document.querySelector("#motion-pose-form").addEventListener("submit", async (ev
   }
   await sendRobotMotion(payload);
 });
-fetchJson("/api/admin/robot/motions").then((catalogue) => {
+function renderMovementCatalogue(catalogue) {
   movementCatalogue = catalogue;
   refreshMovementOptions();
-  document.querySelector("#motion-result").textContent = `${catalogue.dances.length} dances · ${catalogue.emotions.length} expressions · Head, body and both antennas`;
-}).catch(() => {
+  document.querySelector("#motion-result").textContent = `${catalogue.dances.length} official dances · ${catalogue.emotions.length} expressions · ${catalogue.community_count || 0} community moves · Head, body and both antennas`;
+}
+document.querySelector('#motion-reload').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try { renderMovementCatalogue(await fetchJson('/api/admin/robot/motions/reload', {method:'POST'})); }
+  catch (error) { document.querySelector('#motion-result').textContent = error.message; }
+  finally { button.disabled = false; }
+});
+fetchJson("/api/admin/robot/motions").then(renderMovementCatalogue).catch(() => {
   document.querySelector("#motion-result").textContent = "Movement controls are waiting for the robot runtime.";
 });
 

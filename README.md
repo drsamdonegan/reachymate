@@ -66,9 +66,16 @@ check-in** pauses Reachy's voice/camera features and opens Luma's official Expre
 camera. Select **Reachy Mini Camera** in Chrome's camera settings and confirm **Express Mode On** after opening or reloading the scanner; valid single-ticket
 guests then check in without per-person clicks or an API key. Group tickets still need selection. Close
 all Luma scanner tabs and return the camera from the dashboard before resuming camera-enabled chat.
-**Start GPT-Live host** enables interruptible greetings and short look-around movements while Luma scans;
+**Start GPT-Live host** enables interruptible greetings, talking motion, looks and dances while Luma scans;
 it cannot see faces or ticket results. The camera handoff survives restarts. The original assisted local scanner and optional API verification remain available. Use
 **Configure Luma.command** for masked local key entry if verification is wanted.
+
+To install the current public Hugging Face community movement sets, run
+`uv run python -m app.scripts.provision_movements --community`, then click **Reload installed moves**.
+This discovers datasets tagged `reachy_mini_community_moves`, pins each revision and validates the
+recorded motion JSON. GPT-Live can search every installed move; the existing dashboard's movement
+library includes a **Hugging Face community** selector and name/creator search. Playback keeps motor
+limits and never downloads code or plays a recording's sidecar audio. See [movement setup](docs/movements.md).
 
 ```sh
 uv run pytest app/tests -q

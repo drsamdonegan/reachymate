@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from app.services.reachy.motion.commands import RobotMotionRequest
+from app.services.reachy.motion.community import load_index, read_recording
 
 LIBRARIES = {
     "dances": ("pollen-robotics/reachy-mini-dances-library", "3564295e72d41c1271f46bf5540a3fcad9d5f669"),
@@ -113,6 +114,7 @@ class MotionSequence:
 class MotionLibrary:
     def __init__(self, directory: Path):
         self.directory = directory
+        self.community = load_index(directory)
         self.catalog: dict[str, dict[str, dict]] = {kind: {} for kind in LIBRARIES}
         manifest_path = directory / "manifest.json"
         if not manifest_path.is_file():
@@ -138,10 +140,15 @@ class MotionLibrary:
     @staticmethod
     def _validate_recording(data):
         times, frames = data["time"], data["set_target_data"]
-        if not 2 <= len(times) == len(frames) <= 2000:
+        if not 2 <= len(times) == len(frames) <= 30000:
             raise ValueError("Invalid recording size")
         clock = np.asarray(times, dtype=float)
-        if not np.isfinite(clock).all() or clock[0] < 0 or clock[-1] > 40 or np.any(np.diff(clock) < 0):
+        if (
+            not np.isfinite(clock).all()
+            or clock[0] < 0
+            or not clock[0] < clock[-1] <= 600
+            or np.any(np.diff(clock) < 0)
+        ):
             raise ValueError("Invalid recording timeline")
         for entry in frames:
             head, antennas = np.asarray(entry["head"]), np.asarray(entry["antennas"])
@@ -159,6 +166,13 @@ class MotionLibrary:
             "gestures": ["nod", "shake", "wiggle_antennas", "neutral"],
             "dances": sorted(self.catalog["dances"]),
             "emotions": sorted(self.catalog["emotions"]),
+            "community": [
+                {"name": name, "title": entry["title"], "repo": entry["repo"]}
+                for name, entry in sorted(self.community.items())
+            ],
+            "community_count": len(self.community),
+            "community_libraries": sorted({entry["repo"] for entry in self.community.values()}),
+            "search_hint": "Use action list with query/offset to search, then use its action/name.",
             "max_duration_seconds": 20,
             "limits": {
                 "body_yaw_degrees": [-160, 160],
@@ -168,7 +182,50 @@ class MotionLibrary:
                 "body_degrees_per_second": 60,
                 "translation_mm_per_second": 60,
             },
-            "recordings": "Pinned Apache-2.0 Pollen motion data; no sidecar audio is played.",
+            "recordings": "Pinned Hugging Face data; per-source attribution; no sidecar audio.",
+        }
+
+    def search(self, query: str = "", *, offset: int = 0) -> dict:
+        words = query.casefold().replace("_", " ").replace("-", " ").split()
+        rows = []
+        for kind, action in (("dances", "dance"), ("emotions", "emotion")):
+            for name, data in sorted(self.catalog[kind].items()):
+                rows.append(
+                    {
+                        "name": name,
+                        "title": name.replace("_", " "),
+                        "action": action,
+                        "description": str(data.get("description", ""))[:160],
+                        "repo": LIBRARIES[kind][0],
+                    }
+                )
+        for name, entry in sorted(self.community.items()):
+            rows.append(
+                {
+                    "name": name,
+                    "title": entry["title"],
+                    "action": "recording",
+                    "description": str(entry.get("description", ""))[:160],
+                    "repo": entry["repo"],
+                }
+            )
+        matches = [
+            row
+            for row in rows
+            if all(
+                word in " ".join(row.values()).casefold().replace("_", " ").replace("-", " ")
+                for word in words
+            )
+        ]
+        page = matches[offset : offset + 20]
+        while len(json.dumps(page)) > 12000:
+            page.pop()
+        next_offset = offset + len(page)
+        return {
+            "status": "available",
+            "total": len(matches),
+            "moves": page,
+            "next_offset": next_offset if next_offset < len(matches) else None,
         }
 
     def sequence(self, request: RobotMotionRequest, start: Frame) -> MotionSequence:
@@ -233,18 +290,25 @@ class MotionLibrary:
                 frames.append((duration, start.copy()))
             else:
                 raise ValueError("Unknown gesture; request capabilities for the catalogue")
-        elif request.action in {"dance", "emotion"}:
+        elif request.action in {"dance", "emotion", "recording"}:
             kind = "dances" if request.action == "dance" else "emotions"
             name = request.name
             if not name or name == "random":
                 name = "groovy_sway_and_roll" if kind == "dances" else "cheerful1"
-            data = self.catalog[kind].get(name)
+            if request.action == "recording":
+                entry = self.community.get(name)
+                if entry is None:
+                    raise ValueError("Move unavailable; use action list to find its exact name")
+                data = read_recording(self.directory, name, entry)
+                self._validate_recording(data)
+            else:
+                data = self.catalog[kind].get(name)
             if data is None:
                 raise ValueError("Move unavailable; request capabilities for the installed catalogue")
             label = name
             from reachy_mini.motion.recorded_move import RecordedMove
 
-            move = RecordedMove(data)
+            move = RecordedMove(dict(data, description=str(data.get("description", ""))))
             length = min(float(data["time"][-1]) - 0.001, duration / request.repeat)
             cursor = 0.6
             for _ in range(request.repeat):

@@ -49,10 +49,15 @@ Reachy greets guests and listens through his USB microphone while Luma keeps the
 again**, ask him aloud to welcome the next guest, or send a request through **Ask Roo (text)**. A greeting
 is an invitation to scan, never a confirmation that a ticket was accepted. No Luma API key is needed.
 
-Ask “look around”, “look left”, or “stop moving”. The model calls the existing motion controller, limited
-to a single look sequence of at most eight seconds. “Look for a face” can trigger looking around, but
-there is no face detection, identity matching, model image upload, dance, or door action in this mode.
-Luma's preview moves with the head; use looking between tickets and let Reachy settle before scanning.
+Ask “look around”, “look left”, “dance”, “wiggle your antennas”, or “stop moving”. The model can use the
+full existing motion controller, including installed Hugging Face community recordings, with the same
+joint, speed and duration limits as ordinary chat. It searches the catalogue for named moves instead of
+guessing identifiers. Reachy's head also moves with his spoken audio, including after a requested move
+finishes. Stop movement holds still until the next movement or chat start.
+
+“Look for a face” can trigger looking around, but there is no face detection, identity matching, model
+image upload or door action in this mode. Luma's preview moves with the head; use motion between tickets
+and let Reachy settle before scanning. The camera remains owned by Luma throughout.
 
 The host streams microphone audio to OpenAI even without a face in view, including while speaking.
 **Stop host voice** or **Stop chat** stops both the cloud session and local audio without releasing
@@ -96,7 +101,7 @@ or an organiser-controlled test registration; do not test on an absent real gues
 | Automatic single ticket | Present an organiser-controlled ticket or a consenting attendee who is present. Luma records the check-in without a confirmation click; its Checked In list/count updates. |
 | Reload and restart | Reload the dashboard or reopen the launcher: the current host mode is preserved. Restart the app: host voice stays off and local camera capture stays blocked. |
 | Host voice | Start GPT-Live host, hear the welcome, then interrupt it. Input/output overlap increases in voice diagnostics and Luma still shows Express Mode with a live preview. |
-| Look around | Ask for a face or a look-around. A short motion runs; no face detection or camera image is sent to the model. Stop movement cancels it. |
+| Motion | Ask for a look-around, dance and named community move. Motion runs, and speech animation resumes afterwards; no camera image is sent to the model. Stop movement holds still. |
 | Stop and faults | Stop host voice, expire its time limit, or disconnect cloud voice. Microphone capture ends, the handoff remains, and no automatic voice/USB restart occurs. |
 | Return to chat | Close all Luma scanner tabs and return the camera. Start chat explicitly; confirm normal camera and voice work again. |
 | Local QR decoding | Show a Luma ticket to the USB camera; its official check-in link appears. Pasting the decoded URL is also available for troubleshooting. |

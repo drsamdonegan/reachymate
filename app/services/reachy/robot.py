@@ -174,6 +174,14 @@ class ReachyRobotAdapter(SimulatedRobotAdapter):
             "motion": self.motion.expression_diagnostics() if self.motion else {},
         }
 
+    async def reload_movements(self) -> dict:
+        from app.services.reachy.motion.expressions import MotionLibrary
+
+        # Build off the audio loop and swap only once the new catalogue is complete.
+        library = await asyncio.to_thread(MotionLibrary, Path(self.settings.motion_assets_dir))
+        self.movement_library = library
+        return self.motion_capabilities()
+
     async def perform_motion(self, request) -> dict:
         from app.services.reachy.motion.expressions import reachable_joints, safe_frame
         from app.services.reachy.motion.manager import MotionMode
@@ -200,12 +208,13 @@ class ReachyRobotAdapter(SimulatedRobotAdapter):
 
                 sequence = self.movement_library.sequence(request, start)
                 kinematics = AnalyticalKinematics(automatic_body_yaw=False)
-                scales = [1.0, 0.9, 0.75, 0.6, 0.4, 0.2] if request.action in {"dance", "emotion"} else [1.0]
+                recorded = request.action in {"dance", "emotion", "recording"}
+                scales = [1.0, 0.9, 0.75, 0.6, 0.4, 0.2] if recorded else [1.0]
                 for amplitude in scales:
                     candidate = sequence if amplitude == 1.0 else sequence.scaled(amplitude)
                     reachable = True
                     frames = [raw for _, raw in candidate.frames]
-                    if request.action not in {"dance", "emotion"}:
+                    if not recorded:
                         frames += [
                             candidate.evaluate(float(t)) for t in np.arange(0, candidate.duration, 0.05)
                         ]
@@ -234,7 +243,7 @@ class ReachyRobotAdapter(SimulatedRobotAdapter):
             sequence = await asyncio.to_thread(prepare)
             if not self.motion.play_expression(sequence, generation=generation):
                 return {"status": "blocked", "reason": "robot_busy_or_frozen"}
-        except (ValueError, KeyError) as exc:
+        except (ValueError, KeyError, OSError) as exc:
             return {"status": "unavailable", "reason": str(exc)[:200]}
         self.telemetry.publish(
             "robot_motion",

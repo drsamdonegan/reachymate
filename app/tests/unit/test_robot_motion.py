@@ -109,6 +109,14 @@ def test_library_requires_pinned_revision_and_matching_file_digest(tmp_path):
     assert not MotionLibrary(tmp_path).capabilities()["dances"]
 
 
+def test_community_timeline_accepts_sdk_recordings_with_nonzero_start_and_duplicate_samples():
+    frame = {"head": np.eye(4).tolist(), "antennas": [0.0, 0.0]}
+    MotionLibrary._validate_recording({"time": [0.035, 0.035, 90.0], "set_target_data": [frame] * 3})
+    for times in ([0.0, 0.0, 0.0], [0.0, 2.0, 1.0], [0.0, 1.0, 601.0]):
+        with pytest.raises(ValueError, match="timeline"):
+            MotionLibrary._validate_recording({"time": times, "set_target_data": [frame] * 3})
+
+
 def test_full_body_and_head_pose_duration_respects_slew_and_relative_yaw(tmp_path):
     pytest.importorskip("reachy_mini")
     from reachy_mini.utils import create_head_pose
@@ -171,3 +179,112 @@ async def test_one_motion_owner_handles_all_actuators_and_freeze_cancels_playbac
     await motion.stop()
     assert len({tid for tid, _ in writes}) == 1
     assert all({"head", "antennas", "body_yaw"} <= frame.keys() for _, frame in writes)
+
+
+@pytest.mark.asyncio
+async def test_speech_moves_a_held_pose_after_expression_but_stop_and_freeze_hold_still():
+    pytest.importorskip("reachy_mini")
+    from reachy_mini.utils import create_head_pose
+
+    writes = []
+    motion = MotionManager(SimpleNamespace(set_target=lambda **kw: writes.append(kw)))
+    motion.start()
+    try:
+        motion.set_mode(MotionMode.ENGAGED)
+        end = Frame(create_head_pose(yaw=10), np.radians([-10, 10]), 0.0)
+        sequence = MotionSequence([(0, Frame.neutral()), (0.1, end)], label="look")
+        assert motion.play_expression(sequence)
+        async with asyncio.timeout(3):
+            while motion.expression_diagnostics()["status"] != "completed":
+                await asyncio.sleep(0.01)
+        before = motion.frame().head.copy()
+        motion.set_speech_offsets((0.0, 0.0, 0.002, 0.03, 0.06, 0.04))
+        await asyncio.sleep(0.14)
+        assert not np.allclose(motion.frame().head, before, atol=0.001)
+        assert motion.expression_diagnostics()["speech_active"]
+        motion.stop_expression()
+        stopped = motion.frame().head.copy()
+        motion.set_speech_offsets((0.004, 0.004, 0.0, -0.05, -0.05, -0.04))
+        await asyncio.sleep(0.12)
+        assert np.allclose(motion.frame().head, stopped, atol=1e-6)
+        assert not motion.expression_diagnostics()["speech_motion_enabled"]
+        # A new requested motion restores talking movement after completion.
+        generation = motion.reserve_expression()
+        assert motion.play_expression(sequence, generation=generation)
+        assert motion.expression_diagnostics()["speech_motion_enabled"]
+        motion.set_mode(MotionMode.CAPTURE_FREEZE)
+        await asyncio.sleep(0.05)
+        count = len(writes)
+        motion.set_speech_offsets((0.004, 0.0, 0.0, 0.1, 0.1, 0.1))
+        await asyncio.sleep(0.05)
+        assert len(writes) == count
+        assert not motion.error
+    finally:
+        await motion.stop()
+
+
+def community_fixture(tmp_path, count=1):
+    from app.services.reachy.motion.community import recording_id
+
+    directory = tmp_path / "community"
+    directory.mkdir()
+    data = {
+        "time": [0.0, 0.5, 1.0],
+        "description": "A joyful dance",
+        "set_target_data": [{"head": np.eye(4).tolist(), "antennas": [0.0, 0.0], "body_yaw": 0.0}] * 3,
+    }
+    content = json.dumps(data).encode()
+    entries = {}
+    for i in range(count):
+        name = recording_id("maker/demo-moves", f"data/Joy Dance {i}.json")
+        (directory / f"{name}.json").write_bytes(content)
+        entries[name] = {
+            "title": f"Joy Dance {i}",
+            "description": "A joyful dance",
+            "repo": "maker/demo-moves",
+            "revision": "a" * 40,
+            "sha256": hashlib.sha256(content).hexdigest(),
+        }
+    (tmp_path / "community-manifest.json").write_text(json.dumps({"moves": entries}))
+    return entries
+
+
+def test_community_library_loads_lazily_searches_pages_and_verifies_each_recording(tmp_path):
+    pytest.importorskip("reachy_mini")
+    entries = community_fixture(tmp_path, 25)
+    library = MotionLibrary(tmp_path)
+    assert library.capabilities()["community_count"] == 25
+    page = library.search("joy dance")
+    assert len(page["moves"]) == 20 and page["next_offset"] == 20
+    assert len(library.search("joy", offset=20)["moves"]) == 5
+    assert not library.search("not_a_move")["moves"]
+    selected = page["moves"][0]
+    assert selected["action"] == "recording"
+    name = selected["name"]
+    sequence = library.sequence(RobotMotionRequest(action="recording", name=name), Frame.neutral())
+    assert sequence.label == f"recording:{name}"
+    assert sequence.duration < 24
+    (tmp_path / "community" / f"{name}.json").write_text("{}")
+    with pytest.raises(ValueError, match="integrity"):
+        library.sequence(RobotMotionRequest(action="recording", name=name), Frame.neutral())
+    assert entries[name]["revision"] == "a" * 40
+
+
+@pytest.mark.asyncio
+async def test_model_can_search_all_moves_without_tool_result_overflow(settings, tmp_path):
+    community_fixture(tmp_path, 45)
+    ctx = AppContext(settings=settings)
+    library = MotionLibrary(tmp_path)
+    ctx.robot.movement_library = library
+    ctx.robot.motion_capabilities = library.capabilities
+    try:
+        registry = ToolRegistry(handlers={"robot_motion": ctx._robot_motion})
+        capabilities = await registry.execute("robot_motion", {"action": "capabilities"}, call_id="caps")
+        assert capabilities["community_count"] == 45 and "community" not in capabilities
+        page = await registry.execute(
+            "robot_motion", {"action": "list", "query": "joy", "offset": 20}, call_id="page2"
+        )
+        assert page["total"] == 45 and page["next_offset"] == 40
+        assert len(page["moves"]) == 20
+    finally:
+        await ctx.stop()

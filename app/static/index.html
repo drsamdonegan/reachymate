@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="referrer" content="no-referrer" />
     <title>Reachy Office Bouncer</title>
-    <link rel="stylesheet" href="/static/style.css?v=20261030-host3" />
+    <link rel="stylesheet" href="/static/style.css?v=20261030-moves2" />
   </head>
   <body>
     <div class="page">
@@ -47,7 +47,7 @@
             <button id="event-host-stop" disabled>Stop host voice</button>
           </div>
           <p id="event-host-status" class="output" aria-live="polite"></p>
-          <p class="muted">Streams Reachy’s microphone to OpenAI until Stop or the chat time limit shown below. You can interrupt, ask it to welcome guests, or say “look around”. Looking moves the head; it cannot find faces or see ticket results while Luma scans. Use Stop host voice when finished; closing the dashboard does not stop voice. Restart the host to use an edited welcome.</p>
+          <p class="muted">Streams Reachy’s microphone to OpenAI until Stop or the chat time limit shown below. You can interrupt, ask it to welcome guests, look around or dance. Reachy moves while talking; let him settle before showing a QR ticket. He cannot find faces or see ticket results while Luma scans. Use Stop host voice when finished; closing the dashboard does not stop voice. Restart the host to use an edited welcome.</p>
         </div>
         <button id="event-express-finish" hidden>Luma scanner is closed — return camera to Reachy</button>
         <p id="event-express-error" role="status"></p>
@@ -147,11 +147,15 @@
           <form id="motion-library-form" class="stack">
             <label for="motion-kind">Movement library</label>
             <div class="inline wrap">
-              <select id="motion-kind"><option value="dance">Dance</option><option value="emotion">Expression</option></select>
+              <select id="motion-kind"><option value="dance">Dance</option><option value="emotion">Expression</option><option value="recording">Hugging Face community</option></select>
               <select id="motion-name" aria-label="Movement name"></select>
               <button type="submit">Play movement</button>
             </div>
           </form>
+          <label for="motion-search">Find a movement</label>
+          <input id="motion-search" type="search" placeholder="Name or creator" />
+          <p id="motion-search-status" class="muted"></p>
+          <button id="motion-reload" type="button">Reload installed moves</button>
           <p id="motion-result" class="muted" aria-live="polite">Loading movement library…</p>
           <details>
             <summary>Head, body and antenna pose</summary>
@@ -224,7 +228,7 @@
       </section>
     </div>
 
-    <script src="/static/event-checkin.js?v=20261030-host3"></script>
-    <script src="/static/main.js?v=20261030-host3"></script>
+    <script src="/static/event-checkin.js?v=20261030-moves2"></script>
+    <script src="/static/main.js?v=20261030-moves2"></script>
   </body>
 </html>

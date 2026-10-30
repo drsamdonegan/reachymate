@@ -118,7 +118,9 @@ TOOL_DESCRIPTIONS = {
     "end_conversation": "Finish once current audio has drained.",
     "robot_motion": (
         "Control Reachy's head translation/orientation, body yaw and both antennas. "
-        "Use capabilities to list installed dances/emotions and motion limits; look in a direction "
+        "Use capabilities for built-in dances/emotions and limits; list with a query and offset "
+        "to search all installed Hugging Face moves (20 per page), then use the returned action/name. "
+        "Use recording for a community move; look in a direction "
         "or around; pose in mm/degrees; gesture nod/shake/wiggle_antennas/neutral; dance or emotion "
         "by installed name; stop immediately. New motions replace previous ones. No door authority."
     ),

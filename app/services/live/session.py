@@ -47,12 +47,6 @@ def build_session_start(settings: Settings, *, host_greeting: str | None = None)
     schemas = tool_schemas(include_vision=settings.camera_vision_enabled and not host)
     if host:
         schemas = [tool for tool in schemas if tool["name"] in EVENT_HOST_TOOLS]
-        motion = next(tool for tool in schemas if tool["name"] == "robot_motion")
-        motion["description"] = "Move gently to look around, discover capabilities, or stop. No vision."
-        props = motion["parameters"]["properties"]
-        props["action"]["enum"] = ["capabilities", "look", "stop"]
-        props["duration_seconds"]["maximum"] = 8
-        props["repeat"]["maximum"] = 1
     return {
         "type": "session.start",
         "session": {
